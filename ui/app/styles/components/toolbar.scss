@@ -1,0 +1,13 @@
+.toolbar {
+  align-items: center;
+  background-color: $ui-gray-010;
+  display: flex;
+  height: 44px;
+  justify-content: space-between;
+  padding: 2px;
+  border-top: $base-border;
+
+  & > * {
+    margin: 0 $spacing-xxs;
+  }
+}
