@@ -3,6 +3,7 @@ const config = {
   test_page: 'tests/index.html?hidepassed',
   tap_quiet_logs: true,
   disable_watching: true,
+  timeout: 60,
   launchers: {
     bs_chrome: {
       exe: 'node_modules/.bin/browserstack-launch',
@@ -10,7 +11,7 @@ const config = {
       protocol: 'browser',
     },
   },
-  launch_in_ci: ['Chrome'],
+  launch_in_ci: ['bs_chrome'],
   on_exit:
     '[ -e ../../vault-ui-integration-server.pid ] && node ../../scripts/start-vault.js `cat ../../vault-ui-integration-server.pid`; [ -e ../../vault-ui-integration-server.pid ] && rm ../../vault-ui-integration-server.pid',
   proxies: {
