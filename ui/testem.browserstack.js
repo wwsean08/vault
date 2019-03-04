@@ -6,7 +6,7 @@ module.exports = {
   disable_watching: true,
   timeout: 1200,
   browser_start_timeout: 2000,
-  parallel: 2,
+  parallel: 4,
   launchers: {
     BS_Chrome_Current: {
       exe: 'node_modules/.bin/browserstack-launch',
@@ -82,7 +82,7 @@ module.exports = {
     },
   },
   launch_in_dev: [],
-  launch_in_ci: ['BS_Chrome_Current', 'BS_Firefox_Current', 'BS_Safari_Current', 'BS_IE_11'],
+  launch_in_ci: ['BS_Chrome_Current', 'BS_Firefox_Current', 'BS_Safari_Current'],
   on_exit:
     '[ -e ../../vault-ui-integration-server.pid ] && node ../../scripts/start-vault.js `cat ../../vault-ui-integration-server.pid`; [ -e ../../vault-ui-integration-server.pid ] && rm ../../vault-ui-integration-server.pid',
   proxies: {
