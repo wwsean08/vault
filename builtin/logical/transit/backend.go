@@ -68,8 +68,7 @@ type backend struct {
 	lm *keysutil.LockManager
 }
 
-// a lock manager defaults to a syncmap cache, initializeCache modifies the cache type
-// based on configuration
+// initializeCache sets the backend's lock manger cache according to the stored configuration
 func (b *backend) initializeCache(ctx context.Context, s logical.Storage) error {
 	// override default cache if a non-zero cache size was stored
 	entry, err := s.Get(ctx, "config/cache-size")
