@@ -123,6 +123,7 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 		tlsConfigProvided = true
 	}
 
+	// TODO is this the application context or the request context? Will the context persist when the request is done?
 	if tlsConfigProvided {
 		client, err := NewTLSClient(ctx.Done(), es.Logger, username, password, esURL, tlsConfig)
 		if err != nil {
@@ -149,18 +150,18 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 	return nil, nil
 }
 
-func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, expiration time.Time) (username string, password string, err error) {
+func (es *Elasticsearch) CreateUser(_ context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
 	// TODO do we need to guard against races here? In the credential producer or anything?
 	if len(statements.Creation) == 0 {
 		return "", "", dbutil.ErrEmptyCreationStatement
 	}
 
-	username, err = es.CredentialProducer.GenerateUsername(usernameConfig)
+	username, err := es.CredentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
 		return "", "", err
 	}
 
-	password, err = es.CredentialProducer.GeneratePassword()
+	password, err := es.CredentialProducer.GeneratePassword()
 	if err != nil {
 		return "", "", err
 	}
