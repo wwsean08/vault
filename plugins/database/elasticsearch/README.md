@@ -80,3 +80,22 @@ generate one at random. In the same Python terminal as before, continue with:
 ```
 
 Now, Elasticsearch is configured and ready to be used with Vault.
+
+## Example Walkthrough
+
+Here is an example of how to successfully configure and use this secrets engine using the Vault CLI.
+```
+export ESHOME=/home/somewhere/Applications/elasticsearch-6.6.1
+
+vault secrets enable database
+
+vault write database/config/my-elasticsearch-database \
+    plugin_name="elasticsearch-database-plugin" \
+    allowed_roles="my-role" \
+    username=vault \
+    password=dJTCIGtndaksCbHM7X6or7tGOuwzf1Qb \
+    url=http://localhost:9200 \
+    ca_cert=/usr/share/ca-certificates/extra/elastic-stack-ca.crt \
+    client_cert=$ES_HOME/config/certs/elastic-certificates.crt.pem \
+    client_key=$ES_HOME/config/certs/elastic-certificates.key.pem
+```
