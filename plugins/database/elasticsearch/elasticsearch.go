@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -9,17 +10,26 @@ import (
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
 	"github.com/hashicorp/vault/plugins"
+	"github.com/hashicorp/vault/plugins/helper/database/credsutil"
+	"github.com/hashicorp/vault/plugins/helper/database/dbutil"
 )
 
 // Elasticsearch implements dbplugin's Database interface
 type Elasticsearch struct {
-	Logger hclog.Logger
-	Client *Client
+	Logger             hclog.Logger
+	Client             *Client
+	CredentialProducer credsutil.CredentialsProducer
 }
 
 func New() (interface{}, error) {
 	return &Elasticsearch{
 		Logger: hclog.Default(), // TODO what if Vault is on Debug? Will this pick it up?
+		CredentialProducer: &credsutil.SQLCredentialsProducer{
+			DisplayNameLen: 15,
+			RoleNameLen:    15,
+			UsernameLen:    100,
+			Separator:      "-",
+		},
 	}, nil
 }
 
@@ -140,8 +150,43 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 }
 
 func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, expiration time.Time) (username string, password string, err error) {
-	// TODO
-	return "", "", nil
+	// TODO do we need to guard against races here? In the credential producer or anything?
+	if len(statements.Creation) == 0 {
+		return "", "", dbutil.ErrEmptyCreationStatement
+	}
+
+	username, err = es.CredentialProducer.GenerateUsername(usernameConfig)
+	if err != nil {
+		return "", "", err
+	}
+
+	password, err = es.CredentialProducer.GeneratePassword()
+	if err != nil {
+		return "", "", err
+	}
+
+	var stmt *creationStatement
+	if err := json.Unmarshal([]byte(statements.Creation[0]), stmt); err != nil {
+		return "", "", err
+	}
+	if err := stmt.Validate(); err != nil {
+		return "", "", err
+	}
+
+	user := &User{
+		Password: password,
+		Roles:    stmt.PreexistingRoles,
+	}
+	if len(stmt.RoleToCreate) > 0 {
+		if err := es.Client.CreateRole(username, stmt.RoleToCreate); err != nil {
+			return "", "", err
+		}
+		user.Roles = []string{username}
+	}
+	if err := es.Client.CreateUser(username, user); err != nil {
+		return "", "", err
+	}
+	return username, password, nil
 }
 
 func (es *Elasticsearch) RenewUser(ctx context.Context, statements dbplugin.Statements, username string, expiration time.Time) error {
@@ -169,4 +214,16 @@ func (es *Elasticsearch) Close() error {
 func (es *Elasticsearch) Initialize(ctx context.Context, config map[string]interface{}, verifyConnection bool) error {
 	_, err := es.Init(ctx, config, verifyConnection)
 	return err
+}
+
+type creationStatement struct {
+	PreexistingRoles []string               `json:"elasticsearch_roles"`
+	RoleToCreate     map[string]interface{} `json:"elasticsearch_role_definition"`
+}
+
+func (s *creationStatement) Validate() error {
+	if len(s.PreexistingRoles) > 0 && len(s.RoleToCreate) > 0 {
+		return errors.New(`"elasticsearch_roles" and "elasticsearch_role_definition" are mutually exclusive`)
+	}
+	return nil
 }
