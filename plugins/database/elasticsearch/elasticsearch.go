@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	multierror "github.com/hashicorp/go-multierror"
+
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
@@ -151,11 +153,6 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 }
 
 func (es *Elasticsearch) CreateUser(_ context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
-	// TODO do we need to guard against races here? In the credential producer or anything?
-	if len(statements.Creation) == 0 {
-		return "", "", dbutil.ErrEmptyCreationStatement
-	}
-
 	username, err := es.CredentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
 		return "", "", err
@@ -166,11 +163,8 @@ func (es *Elasticsearch) CreateUser(_ context.Context, statements dbplugin.State
 		return "", "", err
 	}
 
-	var stmt *creationStatement
-	if err := json.Unmarshal([]byte(statements.Creation[0]), stmt); err != nil {
-		return "", "", err
-	}
-	if err := stmt.Validate(); err != nil {
+	stmt, err := newCreationStatement(statements)
+	if err != nil {
 		return "", "", err
 	}
 
@@ -191,13 +185,31 @@ func (es *Elasticsearch) CreateUser(_ context.Context, statements dbplugin.State
 }
 
 func (es *Elasticsearch) RenewUser(ctx context.Context, statements dbplugin.Statements, username string, expiration time.Time) error {
-	// TODO
+	// NOOP
+	// TODO why is this a NOOP?
 	return nil
 }
 
 func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Statements, username string) error {
-	// TODO
-	return nil
+	stmt, err := newCreationStatement(statements)
+	if err != nil {
+		return err
+	}
+
+	var errs error
+	if len(stmt.RoleToCreate) > 0 {
+		// If the role already doesn't exist because it was successfully deleted on a previous
+		// attempt to run this code, there will be no error, so it's harmless to try.
+		if err := es.Client.DeleteRole(username); err != nil {
+			errs = multierror.Append(errs, err)
+		}
+	}
+	// Same with the user. If it was already deleted on a previous attempt, there won't be an
+	// error.
+	if err := es.Client.DeleteUser(username); err != nil {
+		errs = multierror.Append(errs, err)
+	}
+	return errs
 }
 
 func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements []string) (config map[string]interface{}, err error) {
@@ -217,14 +229,21 @@ func (es *Elasticsearch) Initialize(ctx context.Context, config map[string]inter
 	return err
 }
 
+func newCreationStatement(statements dbplugin.Statements) (*creationStatement, error) {
+	if len(statements.Creation) == 0 {
+		return nil, dbutil.ErrEmptyCreationStatement
+	}
+	var stmt *creationStatement
+	if err := json.Unmarshal([]byte(statements.Creation[0]), stmt); err != nil {
+		return nil, err
+	}
+	if len(stmt.PreexistingRoles) > 0 && len(stmt.RoleToCreate) > 0 {
+		return nil, errors.New(`"elasticsearch_roles" and "elasticsearch_role_definition" are mutually exclusive`)
+	}
+	return stmt, nil
+}
+
 type creationStatement struct {
 	PreexistingRoles []string               `json:"elasticsearch_roles"`
 	RoleToCreate     map[string]interface{} `json:"elasticsearch_role_definition"`
-}
-
-func (s *creationStatement) Validate() error {
-	if len(s.PreexistingRoles) > 0 && len(s.RoleToCreate) > 0 {
-		return errors.New(`"elasticsearch_roles" and "elasticsearch_role_definition" are mutually exclusive`)
-	}
-	return nil
 }
