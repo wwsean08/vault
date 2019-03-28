@@ -194,8 +194,9 @@ func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Sta
 }
 
 func (es *Elasticsearch) RenewUser(_ context.Context, _ dbplugin.Statements, _ string, _ time.Time) error {
-	// NOOP
-	// TODO why is this a NOOP?
+	// This is not implemented because you can't put an expiration on roles or users. They can only be created
+	// and explicitly revoked. Normally, this function would update a "VALID UNTIL" statement on a database user
+	// but there's no similar need here.
 	return nil
 }
 
@@ -277,6 +278,7 @@ type creationStatement struct {
 // Rather than spread the mutex's logic across all endpoints, it's safer and clearer
 // to hold the synchronization within a factory that handles all the details.
 // It also results in less code repetition.
+// It also makes the raciness easier to unit test.
 type clientFactory struct {
 	clientConfig *ClientConfig
 	lock         *sync.Mutex
