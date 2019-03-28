@@ -33,7 +33,6 @@ func New() (interface{}, error) {
 			Separator:      "-",
 		},
 		clientFactory: &clientFactory{
-			lock:         &sync.Mutex{},
 			clientConfig: &ClientConfig{},
 		},
 	}, nil
@@ -281,18 +280,18 @@ type creationStatement struct {
 // It also makes the raciness easier to unit test.
 type clientFactory struct {
 	clientConfig *ClientConfig
-	lock         *sync.Mutex
+	mux          sync.Mutex
 }
 
 func (f *clientFactory) GetClient() (*Client, error) {
-	f.lock.Lock()
-	defer f.lock.Unlock()
+	f.mux.Lock()
+	defer f.mux.Unlock()
 	return NewClient(f.clientConfig)
 }
 
 func (f *clientFactory) UpdateConfig(clientConfig *ClientConfig) {
-	f.lock.Lock()
-	defer f.lock.Unlock()
+	f.mux.Lock()
+	defer f.mux.Unlock()
 	f.clientConfig = clientConfig
 }
 
@@ -301,8 +300,8 @@ func (f *clientFactory) UpdatePassword(done <-chan struct{}, newPassword string)
 	if err != nil {
 		return err
 	}
-	f.lock.Lock()
-	defer f.lock.Unlock()
+	f.mux.Lock()
+	defer f.mux.Unlock()
 	if err := client.ChangePassword(done, f.clientConfig.Username, newPassword); err != nil {
 		return err
 	}
