@@ -52,13 +52,13 @@ func (es *Elasticsearch) Type() (string, error) {
 	return "elasticsearch", nil
 }
 
-func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
-	inboundRootClientConfig := &ClientConfig{
+func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
+	inboundConfig := &ClientConfig{
 		Logger: es.logger,
 	}
 
-	if raw, ok := rootCredentialConfig["url"]; ok {
-		inboundRootClientConfig.BaseURL, ok = raw.(string)
+	if raw, ok := rootConfig["url"]; ok {
+		inboundConfig.BaseURL, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"url" must be a string`)
 		}
@@ -66,8 +66,8 @@ func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[stri
 		return nil, errors.New(`"url" must be provided`)
 	}
 
-	if raw, ok := rootCredentialConfig["username"]; ok {
-		inboundRootClientConfig.Username, ok = raw.(string)
+	if raw, ok := rootConfig["username"]; ok {
+		inboundConfig.Username, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"username" must be a string`)
 		}
@@ -75,8 +75,8 @@ func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[stri
 		return nil, errors.New(`"username" must be provided`)
 	}
 
-	if raw, ok := rootCredentialConfig["password"]; ok {
-		inboundRootClientConfig.Password, ok = raw.(string)
+	if raw, ok := rootConfig["password"]; ok {
+		inboundConfig.Password, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"password" must be a string"`)
 		}
@@ -87,42 +87,42 @@ func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[stri
 	tlsConfigInbound := false
 	inboundTLSConfig := &TLSConfig{}
 
-	if raw, ok := rootCredentialConfig["ca_cert"]; ok {
+	if raw, ok := rootConfig["ca_cert"]; ok {
 		inboundTLSConfig.CACert, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"ca_cert" must be a string`)
 		}
 		tlsConfigInbound = true
 	}
-	if raw, ok := rootCredentialConfig["ca_path"]; ok {
+	if raw, ok := rootConfig["ca_path"]; ok {
 		inboundTLSConfig.CAPath, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"ca_path" must be a string`)
 		}
 		tlsConfigInbound = true
 	}
-	if raw, ok := rootCredentialConfig["client_cert"]; ok {
+	if raw, ok := rootConfig["client_cert"]; ok {
 		inboundTLSConfig.ClientCert, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"client_cert" must be a string`)
 		}
 		tlsConfigInbound = true
 	}
-	if raw, ok := rootCredentialConfig["client_key"]; ok {
+	if raw, ok := rootConfig["client_key"]; ok {
 		inboundTLSConfig.ClientKey, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"client_key" must be a string`)
 		}
 		tlsConfigInbound = true
 	}
-	if raw, ok := rootCredentialConfig["tls_server_name"]; ok {
+	if raw, ok := rootConfig["tls_server_name"]; ok {
 		inboundTLSConfig.TLSServerName, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"tls_server_name" must be a string`)
 		}
 		tlsConfigInbound = true
 	}
-	if raw, ok := rootCredentialConfig["insecure"]; ok {
+	if raw, ok := rootConfig["insecure"]; ok {
 		inboundTLSConfig.Insecure, ok = raw.(bool)
 		if !ok {
 			return nil, errors.New(`"insecure" must be a bool`)
@@ -134,11 +134,11 @@ func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[stri
 	// We flag this to the client by leaving the TLS config pointer nil. So, we should
 	// only fulfill this pointer if the user actually wants TLS.
 	if tlsConfigInbound {
-		inboundRootClientConfig.TLSConfig = inboundTLSConfig
+		inboundConfig.TLSConfig = inboundTLSConfig
 	}
 
 	// Let's always do an initial check that the client config at least _looks_ reasonable.
-	inboundClient, err := NewClient(inboundRootClientConfig)
+	inboundClient, err := NewClient(inboundConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[stri
 			return nil, err
 		}
 	}
-	es.clientFactory.UpdateConfig(inboundRootClientConfig)
+	es.clientFactory.UpdateConfig(inboundConfig)
 	return nil, nil
 }
 
