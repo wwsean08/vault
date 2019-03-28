@@ -80,7 +80,7 @@ func TestTLSClient(t *testing.T) {
 		ClientCert: esHome + "/config/certs/elastic-certificates.crt.pem",
 		ClientKey:  esHome + "/config/certs/elastic-certificates.key.pem",
 	}
-	client, err := NewTLSClient(testDoneChan, hclog.Default(), esUsername, esPassword, ts.URL, tlsConfig)
+	client, err := NewClient(testDoneChan, hclog.Default(), esUsername, esPassword, ts.URL, tlsConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

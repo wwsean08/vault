@@ -21,10 +21,16 @@ import (
 	rootcerts "github.com/hashicorp/go-rootcerts"
 )
 
+type ClientConfig struct {
+	Logger                      hclog.Logger
+	Username, Password, BaseURL string
+	TLSConfig                   *TLSConfig // may be nil to flag that TLS is not desired by the user
+}
+
 // TLSConfig contains the parameters needed to configure TLS on the HTTP client
 // used to communicate with Elasticsearch.
 type TLSConfig struct {
-	// CACert is the path to a PEM-encoded CA cert file to use to verify the
+	// CACert is the path to a PEM-encoded CA cert file to use to verify theHTTPClient
 	// Elasticsearch server SSL certificate.
 	CACert string
 
@@ -46,34 +52,30 @@ type TLSConfig struct {
 	Insecure bool
 }
 
-func NewClient(done <-chan struct{}, logger hclog.Logger, username, password, baseURL string) (*Client, error) {
-	return NewTLSClient(done, logger, username, password, baseURL, nil)
-}
-
-func NewTLSClient(done <-chan struct{}, logger hclog.Logger, username, password, baseURL string, tlsConfig *TLSConfig) (*Client, error) {
+func NewClient(config *ClientConfig) (*Client, error) {
 
 	httpClient := cleanhttp.DefaultClient()
 
-	if tlsConfig != nil {
+	if config.TLSConfig != nil {
 
 		conf := &tls.Config{
-			ServerName:         tlsConfig.TLSServerName,
-			InsecureSkipVerify: tlsConfig.Insecure,
+			ServerName:         config.TLSConfig.TLSServerName,
+			InsecureSkipVerify: config.TLSConfig.Insecure,
 			MinVersion:         tls.VersionTLS12,
 		}
 
-		if tlsConfig.ClientCert != "" && tlsConfig.ClientKey != "" {
-			clientCertificate, err := tls.LoadX509KeyPair(tlsConfig.ClientCert, tlsConfig.ClientKey)
+		if config.TLSConfig.ClientCert != "" && config.TLSConfig.ClientKey != "" {
+			clientCertificate, err := tls.LoadX509KeyPair(config.TLSConfig.ClientCert, config.TLSConfig.ClientKey)
 			if err != nil {
 				return nil, err
 			}
 			conf.Certificates = append(conf.Certificates, clientCertificate)
 		}
 
-		if tlsConfig.CACert != "" || tlsConfig.CAPath != "" {
+		if config.TLSConfig.CACert != "" || config.TLSConfig.CAPath != "" {
 			rootConfig := &rootcerts.Config{
-				CAFile: tlsConfig.CACert,
-				CAPath: tlsConfig.CAPath,
+				CAFile: config.TLSConfig.CACert,
+				CAPath: config.TLSConfig.CAPath,
 			}
 			if err := rootcerts.ConfigureTLS(conf, rootConfig); err != nil {
 				return nil, err
@@ -84,17 +86,15 @@ func NewTLSClient(done <-chan struct{}, logger hclog.Logger, username, password,
 	}
 
 	return &Client{
-		done:       done,
-		logger:     logger,
-		username:   username,
-		password:   password,
-		baseURL:    baseURL,
+		logger:     config.Logger,
+		username:   config.Username,
+		password:   config.Password,
+		baseURL:    config.BaseURL,
 		httpClient: httpClient,
 	}, nil
 }
 
 type Client struct {
-	done                        <-chan struct{}
 	logger                      hclog.Logger
 	username, password, baseURL string
 	httpClient                  *http.Client
@@ -102,7 +102,7 @@ type Client struct {
 
 // Role management
 
-func (c *Client) CreateRole(name string, role map[string]interface{}) error {
+func (c *Client) CreateRole(done <-chan struct{}, name string, role map[string]interface{}) error {
 	endpoint := "/_xpack/security/role/" + name
 	method := http.MethodPost
 
@@ -114,11 +114,11 @@ func (c *Client) CreateRole(name string, role map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	return c.do(req, nil)
+	return c.do(done, req, nil)
 }
 
 // GetRole returns nil, nil if role is unfound.
-func (c *Client) GetRole(name string) (map[string]interface{}, error) {
+func (c *Client) GetRole(done <-chan struct{}, name string) (map[string]interface{}, error) {
 	endpoint := "/_xpack/security/role/" + name
 	method := http.MethodGet
 
@@ -127,13 +127,13 @@ func (c *Client) GetRole(name string) (map[string]interface{}, error) {
 		return nil, err
 	}
 	var roles map[string]map[string]interface{}
-	if err := c.do(req, &roles); err != nil {
+	if err := c.do(done, req, &roles); err != nil {
 		return nil, err
 	}
 	return roles[name], nil
 }
 
-func (c *Client) DeleteRole(name string) error {
+func (c *Client) DeleteRole(done <-chan struct{}, name string) error {
 	endpoint := "/_xpack/security/role/" + name
 	method := http.MethodDelete
 
@@ -141,7 +141,7 @@ func (c *Client) DeleteRole(name string) error {
 	if err != nil {
 		return err
 	}
-	return c.do(req, nil)
+	return c.do(done, req, nil)
 }
 
 // User management
@@ -151,7 +151,7 @@ type User struct {
 	Roles    []string `json:"roles"`
 }
 
-func (c *Client) CreateUser(name string, user *User) error {
+func (c *Client) CreateUser(done <-chan struct{}, name string, user *User) error {
 	endpoint := "/_xpack/security/user/" + name
 	method := http.MethodPost
 
@@ -163,10 +163,10 @@ func (c *Client) CreateUser(name string, user *User) error {
 	if err != nil {
 		return err
 	}
-	return c.do(req, nil)
+	return c.do(done, req, nil)
 }
 
-func (c *Client) ChangePassword(name, newPassword string) error {
+func (c *Client) ChangePassword(done <-chan struct{}, name, newPassword string) error {
 	endpoint := "/_xpack/security/user/" + name + "/_password"
 	method := http.MethodPost
 
@@ -178,10 +178,10 @@ func (c *Client) ChangePassword(name, newPassword string) error {
 	if err != nil {
 		return err
 	}
-	return c.do(req, nil)
+	return c.do(done, req, nil)
 }
 
-func (c *Client) DeleteUser(name string) error {
+func (c *Client) DeleteUser(done <-chan struct{}, name string) error {
 	endpoint := "/_xpack/security/user/" + name
 	method := http.MethodDelete
 
@@ -189,12 +189,12 @@ func (c *Client) DeleteUser(name string) error {
 	if err != nil {
 		return err
 	}
-	return c.do(req, nil)
+	return c.do(done, req, nil)
 }
 
 // Low-level request handling
 
-func (c *Client) do(req *http.Request, ret interface{}) error {
+func (c *Client) do(done <-chan struct{}, req *http.Request, ret interface{}) error {
 
 	req.SetBasicAuth(c.username, c.password)
 	req.Header.Add("Content-Type", "application/json")
@@ -207,7 +207,7 @@ func (c *Client) do(req *http.Request, ret interface{}) error {
 		if tries != 0 {
 			backoffTimer.Reset(expBackoff.NextBackOff())
 			select {
-			case <-c.done:
+			case <-done:
 				return nil
 			case <-backoffTimer.C:
 			}

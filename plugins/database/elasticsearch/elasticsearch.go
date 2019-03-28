@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
-	multierror "github.com/hashicorp/go-multierror"
-
 	hclog "github.com/hashicorp/go-hclog"
+	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
 	"github.com/hashicorp/vault/plugins"
@@ -18,19 +18,23 @@ import (
 
 // Elasticsearch implements dbplugin's Database interface
 type Elasticsearch struct {
-	Logger             hclog.Logger
-	Client             *Client
-	CredentialProducer credsutil.CredentialsProducer
+	logger             hclog.Logger
+	credentialProducer credsutil.CredentialsProducer
+	clientFactory      *clientFactory
 }
 
 func New() (interface{}, error) {
 	return &Elasticsearch{
-		Logger: hclog.Default(), // TODO what if Vault is on Debug? Will this pick it up?
-		CredentialProducer: &credsutil.SQLCredentialsProducer{
+		logger: hclog.Default(), // TODO what if Vault is on Debug? Will this pick it up?
+		credentialProducer: &credsutil.SQLCredentialsProducer{
 			DisplayNameLen: 15,
 			RoleNameLen:    15,
 			UsernameLen:    100,
 			Separator:      "-",
+		},
+		clientFactory: &clientFactory{
+			lock:         &sync.Mutex{},
+			clientConfig: &ClientConfig{},
 		},
 	}, nil
 }
@@ -48,10 +52,13 @@ func (es *Elasticsearch) Type() (string, error) {
 	return "elasticsearch", nil
 }
 
-func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
-	var esURL string
-	if raw, ok := config["url"]; ok {
-		esURL, ok = raw.(string)
+func (es *Elasticsearch) Init(ctx context.Context, rootCredentialConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
+	inboundRootClientConfig := &ClientConfig{
+		Logger: es.logger,
+	}
+
+	if raw, ok := rootCredentialConfig["url"]; ok {
+		inboundRootClientConfig.BaseURL, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"url" must be a string`)
 		}
@@ -59,9 +66,8 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 		return nil, errors.New(`"url" must be provided`)
 	}
 
-	var username string
-	if raw, ok := config["username"]; ok {
-		username, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["username"]; ok {
+		inboundRootClientConfig.Username, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"username" must be a string`)
 		}
@@ -69,9 +75,8 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 		return nil, errors.New(`"username" must be provided`)
 	}
 
-	var password string
-	if raw, ok := config["password"]; ok {
-		password, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["password"]; ok {
+		inboundRootClientConfig.Password, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"password" must be a string"`)
 		}
@@ -79,86 +84,84 @@ func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}
 		return nil, errors.New(`"password" must be provided`)
 	}
 
-	tlsConfigProvided := false
-	tlsConfig := &TLSConfig{}
+	tlsConfigInbound := false
+	inboundTLSConfig := &TLSConfig{}
 
-	if raw, ok := config["ca_cert"]; ok {
-		tlsConfig.CACert, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["ca_cert"]; ok {
+		inboundTLSConfig.CACert, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"ca_cert" must be a string`)
 		}
-		tlsConfigProvided = true
+		tlsConfigInbound = true
 	}
-	if raw, ok := config["ca_path"]; ok {
-		tlsConfig.CAPath, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["ca_path"]; ok {
+		inboundTLSConfig.CAPath, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"ca_path" must be a string`)
 		}
-		tlsConfigProvided = true
+		tlsConfigInbound = true
 	}
-	if raw, ok := config["client_cert"]; ok {
-		tlsConfig.ClientCert, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["client_cert"]; ok {
+		inboundTLSConfig.ClientCert, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"client_cert" must be a string`)
 		}
-		tlsConfigProvided = true
+		tlsConfigInbound = true
 	}
-	if raw, ok := config["client_key"]; ok {
-		tlsConfig.ClientKey, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["client_key"]; ok {
+		inboundTLSConfig.ClientKey, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"client_key" must be a string`)
 		}
-		tlsConfigProvided = true
+		tlsConfigInbound = true
 	}
-	if raw, ok := config["tls_server_name"]; ok {
-		tlsConfig.TLSServerName, ok = raw.(string)
+	if raw, ok := rootCredentialConfig["tls_server_name"]; ok {
+		inboundTLSConfig.TLSServerName, ok = raw.(string)
 		if !ok {
 			return nil, errors.New(`"tls_server_name" must be a string`)
 		}
-		tlsConfigProvided = true
+		tlsConfigInbound = true
 	}
-	if raw, ok := config["insecure"]; ok {
-		tlsConfig.Insecure, ok = raw.(bool)
+	if raw, ok := rootCredentialConfig["insecure"]; ok {
+		inboundTLSConfig.Insecure, ok = raw.(bool)
 		if !ok {
 			return nil, errors.New(`"insecure" must be a bool`)
 		}
-		tlsConfigProvided = true
+		tlsConfigInbound = true
 	}
 
-	// TODO is this the application context or the request context? Will the context persist when the request is done?
-	if tlsConfigProvided {
-		client, err := NewTLSClient(ctx.Done(), es.Logger, username, password, esURL, tlsConfig)
-		if err != nil {
-			return nil, err
-		}
-		es.Client = client
-	} else {
-		client, err := NewClient(ctx.Done(), es.Logger, username, password, esURL)
-		if err != nil {
-			return nil, err
-		}
-		es.Client = client
+	// If no TLS config was provided, the user probably doesn't want TLS.
+	// We flag this to the client by leaving the TLS config pointer nil. So, we should
+	// only fulfill this pointer if the user actually wants TLS.
+	if tlsConfigInbound {
+		inboundRootClientConfig.TLSConfig = inboundTLSConfig
+	}
+
+	// Let's always do an initial check that the client config at least _looks_ reasonable.
+	inboundClient, err := NewClient(inboundRootClientConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	if verifyConnection {
 		// Whether this role is found or unfound, if we're configured correctly there will
-		// be no err from the client. However, if something is misconfigured, this will yield
+		// be no err from the call. However, if something is misconfigured, this will yield
 		// an error response, which will be described in the returned error.
-		if _, err := es.Client.GetRole("vault-test"); err != nil {
+		if _, err := inboundClient.GetRole(ctx.Done(), "vault-test"); err != nil {
 			return nil, err
 		}
 	}
-
+	es.clientFactory.UpdateConfig(inboundRootClientConfig)
 	return nil, nil
 }
 
-func (es *Elasticsearch) CreateUser(_ context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
-	username, err := es.CredentialProducer.GenerateUsername(usernameConfig)
+func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
+	username, err := es.credentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
 		return "", "", err
 	}
 
-	password, err := es.CredentialProducer.GeneratePassword()
+	password, err := es.credentialProducer.GeneratePassword()
 	if err != nil {
 		return "", "", err
 	}
@@ -172,19 +175,25 @@ func (es *Elasticsearch) CreateUser(_ context.Context, statements dbplugin.State
 		Password: password,
 		Roles:    stmt.PreexistingRoles,
 	}
+
+	client, err := es.clientFactory.GetClient()
+	if err != nil {
+		return "", "", err
+	}
+
 	if len(stmt.RoleToCreate) > 0 {
-		if err := es.Client.CreateRole(username, stmt.RoleToCreate); err != nil {
+		if err := client.CreateRole(ctx.Done(), username, stmt.RoleToCreate); err != nil {
 			return "", "", err
 		}
 		user.Roles = []string{username}
 	}
-	if err := es.Client.CreateUser(username, user); err != nil {
+	if err := client.CreateUser(ctx.Done(), username, user); err != nil {
 		return "", "", err
 	}
 	return username, password, nil
 }
 
-func (es *Elasticsearch) RenewUser(ctx context.Context, statements dbplugin.Statements, username string, expiration time.Time) error {
+func (es *Elasticsearch) RenewUser(_ context.Context, _ dbplugin.Statements, _ string, _ time.Time) error {
 	// NOOP
 	// TODO why is this a NOOP?
 	return nil
@@ -196,30 +205,44 @@ func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Sta
 		return err
 	}
 
+	client, err := es.clientFactory.GetClient()
+	if err != nil {
+		return err
+	}
+
 	var errs error
 	if len(stmt.RoleToCreate) > 0 {
 		// If the role already doesn't exist because it was successfully deleted on a previous
 		// attempt to run this code, there will be no error, so it's harmless to try.
-		if err := es.Client.DeleteRole(username); err != nil {
+		if err := client.DeleteRole(ctx.Done(), username); err != nil {
 			errs = multierror.Append(errs, err)
 		}
 	}
 	// Same with the user. If it was already deleted on a previous attempt, there won't be an
 	// error.
-	if err := es.Client.DeleteUser(username); err != nil {
+	if err := client.DeleteUser(ctx.Done(), username); err != nil {
 		errs = multierror.Append(errs, err)
 	}
 	return errs
 }
 
-func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements []string) (config map[string]interface{}, err error) {
-	// TODO
+func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements []string) (map[string]interface{}, error) {
+	if len(statements) != 1 || statements[0] != "TRUE" {
+		return nil, nil
+	}
+	newPassword, err := es.credentialProducer.GeneratePassword()
+	if err != nil {
+		return nil, err
+	}
+	if err := es.clientFactory.UpdatePassword(ctx.Done(), newPassword); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 
 // This gets called after calling roles or creds.
 func (es *Elasticsearch) Close() error {
-	// TODO
+	// NOOP, nothing to close.
 	return nil
 }
 
@@ -246,4 +269,41 @@ func newCreationStatement(statements dbplugin.Statements) (*creationStatement, e
 type creationStatement struct {
 	PreexistingRoles []string               `json:"elasticsearch_roles"`
 	RoleToCreate     map[string]interface{} `json:"elasticsearch_role_definition"`
+}
+
+// clientFactory prevents races because both the config endpoint and the rotate root action
+// could be acting upon the password, right when the password is being read to create new
+// clients for requests.
+// Rather than spread the mutex's logic across all endpoints, it's safer and clearer
+// to hold the synchronization within a factory that handles all the details.
+// It also results in less code repetition.
+type clientFactory struct {
+	clientConfig *ClientConfig
+	lock         *sync.Mutex
+}
+
+func (f *clientFactory) GetClient() (*Client, error) {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+	return NewClient(f.clientConfig)
+}
+
+func (f *clientFactory) UpdateConfig(clientConfig *ClientConfig) {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+	f.clientConfig = clientConfig
+}
+
+func (f *clientFactory) UpdatePassword(done <-chan struct{}, newPassword string) error {
+	client, err := f.GetClient()
+	if err != nil {
+		return err
+	}
+	f.lock.Lock()
+	defer f.lock.Unlock()
+	if err := client.ChangePassword(done, f.clientConfig.Username, newPassword); err != nil {
+		return err
+	}
+	f.clientConfig.Password = newPassword
+	return nil
 }
