@@ -3,7 +3,7 @@ package elasticsearch
 /*
 This lightweight client implements only the methods needed for this secrets engine.
 It consumes this API:
-https://www.elastic.co/guide/en/elasticsearch/reference/current/security-api.html
+https://www.elastic.co/guide/en/elasticsearch/reference/6.6/security-api.html
 */
 
 import (
