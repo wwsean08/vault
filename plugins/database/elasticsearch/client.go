@@ -17,48 +17,14 @@ import (
 
 	"github.com/cenkalti/backoff"
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
-	hclog "github.com/hashicorp/go-hclog"
 	rootcerts "github.com/hashicorp/go-rootcerts"
 )
 
 type ClientConfig struct {
-	Logger                      hclog.Logger
 	Username, Password, BaseURL string
 
 	// Leave this nil to flag that TLS is not desired
 	TLSConfig *TLSConfig
-}
-
-/*
-String prints the client config with the sensitive password omitted,
-with all fields at the top level, and with the TLS config always shown
-for explicitness. It produces a JSON string like this and is safe to log:
-
-{
-	"Username": "username",
-	"BaseURL": "http://localhost:9200",
-	"CACert": "",
-	"CAPath": "",
-	"ClientCert": "",
-	"ClientKey": "path/to/key.pem",
-	"TLSServerName": "",
-	"Insecure": false
-}
-*/
-func (c *ClientConfig) String() string {
-	tlsConfig := &TLSConfig{}
-	if c.TLSConfig != nil {
-		tlsConfig = c.TLSConfig
-	}
-	b, _ := json.Marshal(struct {
-		Username, BaseURL string
-		*TLSConfig
-	}{
-		Username:  c.Username,
-		BaseURL:   c.BaseURL,
-		TLSConfig: tlsConfig,
-	})
-	return fmt.Sprintf("%s", b)
 }
 
 // TLSConfig contains the parameters needed to configure TLS on the HTTP client
@@ -113,7 +79,6 @@ func NewClient(config *ClientConfig) (*Client, error) {
 		httpClient.Transport = &http.Transport{TLSClientConfig: conf}
 	}
 	return &Client{
-		logger:     config.Logger,
 		username:   config.Username,
 		password:   config.Password,
 		baseURL:    config.BaseURL,
@@ -122,7 +87,6 @@ func NewClient(config *ClientConfig) (*Client, error) {
 }
 
 type Client struct {
-	logger                      hclog.Logger
 	username, password, baseURL string
 	httpClient                  *http.Client
 }

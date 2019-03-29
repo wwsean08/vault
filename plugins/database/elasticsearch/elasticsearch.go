@@ -8,7 +8,8 @@ import (
 	"sync"
 	"time"
 
-	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/errwrap"
+
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
@@ -19,14 +20,12 @@ import (
 
 // Elasticsearch implements dbplugin's Database interface
 type Elasticsearch struct {
-	logger             hclog.Logger
 	credentialProducer credsutil.CredentialsProducer
 	clientFactory      *clientFactory
 }
 
 func New() (interface{}, error) {
 	return &Elasticsearch{
-		logger: hclog.Default(), // TODO what if Vault is on Debug? Will this pick it up?
 		credentialProducer: &credsutil.SQLCredentialsProducer{
 			DisplayNameLen: 15,
 			RoleNameLen:    15,
@@ -53,10 +52,7 @@ func (es *Elasticsearch) Type() (string, error) {
 }
 
 func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
-	es.logger.Debug("initializing...")
-	inboundConfig := &ClientConfig{
-		Logger: es.logger,
-	}
+	inboundConfig := &ClientConfig{}
 
 	raw, ok := rootConfig["username"]
 	if !ok {
@@ -141,7 +137,7 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 	// Let's always do an initial check that the client config at least _looks_ reasonable.
 	inboundClient, err := NewClient(inboundConfig)
 	if err != nil {
-		return nil, err
+		return nil, errwrap.Wrapf("couldn't make client with inbound config: {{err}}", err)
 	}
 
 	if verifyConnection {
@@ -149,29 +145,27 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 		// be no err from the call. However, if something is misconfigured, this will yield
 		// an error response, which will be described in the returned error.
 		if _, err := inboundClient.GetRole(ctx.Done(), "vault-test"); err != nil {
-			return nil, err
+			return nil, errwrap.Wrapf("client test of getting a role failed: {{err}}", err)
 		}
 	}
 	es.clientFactory.UpdateConfig(inboundConfig)
-	es.logger.Debug(fmt.Sprintf("successfully updated config to %s", inboundConfig))
 	return nil, nil
 }
 
 func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
-	es.logger.Debug("creating user...")
 	username, err := es.credentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
-		return "", "", err
+		return "", "", errwrap.Wrapf(fmt.Sprintf("unable to generate username for %q: {{err}}", usernameConfig), err)
 	}
 
 	password, err := es.credentialProducer.GeneratePassword()
 	if err != nil {
-		return "", "", err
+		return "", "", errwrap.Wrapf("unable to generate password: {{err}}", err)
 	}
 
 	stmt, err := newCreationStatement(statements)
 	if err != nil {
-		return "", "", err
+		return "", "", errwrap.Wrapf("unable to read creation_statements: {{err}}", err)
 	}
 
 	user := &User{
@@ -181,20 +175,18 @@ func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Sta
 
 	client, err := es.clientFactory.GetClient()
 	if err != nil {
-		return "", "", err
+		return "", "", errwrap.Wrapf("unable to get client: {{err}}", err)
 	}
 
 	if len(stmt.RoleToCreate) > 0 {
 		if err := client.CreateRole(ctx.Done(), username, stmt.RoleToCreate); err != nil {
-			return "", "", err
+			return "", "", errwrap.Wrapf(fmt.Sprintf("unable to create role name %s, role definition %q: {{err}}", username, stmt.RoleToCreate), err)
 		}
-		es.logger.Debug("created role named %s", username)
 		user.Roles = []string{username}
 	}
 	if err := client.CreateUser(ctx.Done(), username, user); err != nil {
-		return "", "", err
+		return "", "", errwrap.Wrapf(fmt.Sprintf("unable to create user name %s, user %q: {{err}}", username, user), err)
 	}
-	es.logger.Debug(fmt.Sprintf("created user named %s", username))
 	return username, password, nil
 }
 
@@ -206,15 +198,14 @@ func (es *Elasticsearch) RenewUser(_ context.Context, _ dbplugin.Statements, _ s
 }
 
 func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Statements, username string) error {
-	es.logger.Debug(fmt.Sprintf("revoking user %s...", username))
 	stmt, err := newCreationStatement(statements)
 	if err != nil {
-		return err
+		return errwrap.Wrapf("unable to read creation_statements: {{err}}", err)
 	}
 
 	client, err := es.clientFactory.GetClient()
 	if err != nil {
-		return err
+		return errwrap.Wrapf("unable to get client: {{err}}", err)
 	}
 
 	var errs error
@@ -222,37 +213,31 @@ func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Sta
 		// If the role already doesn't exist because it was successfully deleted on a previous
 		// attempt to run this code, there will be no error, so it's harmless to try.
 		if err := client.DeleteRole(ctx.Done(), username); err != nil {
-			errs = multierror.Append(errs, err)
+			errs = multierror.Append(errs, errwrap.Wrapf(fmt.Sprintf("unable to delete role name %s: {{err}}", username), err))
 		}
-		es.logger.Debug(fmt.Sprintf("deleted role named %s", username))
 	}
 	// Same with the user. If it was already deleted on a previous attempt, there won't be an
 	// error.
 	if err := client.DeleteUser(ctx.Done(), username); err != nil {
-		errs = multierror.Append(errs, err)
+		errs = multierror.Append(errs, errwrap.Wrapf(fmt.Sprintf("unable to create user name %s: {{err}}", username), err))
 	}
-	es.logger.Debug(fmt.Sprintf("deleted user named %s", username))
 	return errs
 }
 
 func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements []string) (map[string]interface{}, error) {
-	es.logger.Debug("rotating root credentials...")
 	if len(statements) != 1 || statements[0] != "TRUE" {
-		es.logger.Debug(`root credential rotation is not enabled; to enable it, set revocation_statements="TRUE"`)
 		return nil, nil
 	}
 	newPassword, err := es.credentialProducer.GeneratePassword()
 	if err != nil {
-		return nil, err
+		return nil, errwrap.Wrapf("unable to generate root password: {{err}}", err)
 	}
 	if err := es.clientFactory.UpdatePassword(ctx.Done(), newPassword); err != nil {
-		return nil, err
+		return nil, errwrap.Wrapf("unable to update root password: {{err}}", err)
 	}
-	es.logger.Debug("password updated")
 	return nil, nil
 }
 
-// This gets called after calling roles or creds.
 func (es *Elasticsearch) Close() error {
 	// NOOP, nothing to close.
 	return nil
@@ -270,7 +255,7 @@ func newCreationStatement(statements dbplugin.Statements) (*creationStatement, e
 	}
 	var stmt *creationStatement
 	if err := json.Unmarshal([]byte(statements.Creation[0]), stmt); err != nil {
-		return nil, err
+		return nil, errwrap.Wrapf(fmt.Sprintf("unable to unmarshal %s: {{err}}", []byte(statements.Creation[0])), err)
 	}
 	if len(stmt.PreexistingRoles) > 0 && len(stmt.RoleToCreate) > 0 {
 		return nil, errors.New(`"elasticsearch_roles" and "elasticsearch_role_definition" are mutually exclusive`)
