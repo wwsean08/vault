@@ -28,6 +28,7 @@ var (
 		"org.apache.cassandra.auth.PasswordAuthenticator",
 		"com.instaclustr.cassandra.auth.SharedSecretAuthenticator",
 		"com.datastax.bdp.cassandra.auth.DseAuthenticator",
+		"io.aiven.cassandra.auth.AivenAuthenticator",
 	}
 )
 
@@ -98,8 +99,11 @@ type ConnConfig struct {
 	ConnectTimeout time.Duration
 	Compressor     Compressor
 	Authenticator  Authenticator
+	AuthProvider   func(h *HostInfo) (Authenticator, error)
 	Keepalive      time.Duration
-	tlsConfig      *tls.Config
+
+	tlsConfig       *tls.Config
+	disableCoalesce bool
 }
 
 type ConnErrorHandler interface {
@@ -155,8 +159,34 @@ type Conn struct {
 	timeouts int64
 }
 
-// Connect establishes a connection to a Cassandra node.
-func (s *Session) dial(host *HostInfo, cfg *ConnConfig, errorHandler ConnErrorHandler) (*Conn, error) {
+// connect establishes a connection to a Cassandra node using session's connection config.
+func (s *Session) connect(host *HostInfo, errorHandler ConnErrorHandler) (*Conn, error) {
+	return s.dial(host, s.connCfg, errorHandler)
+}
+
+// dial establishes a connection to a Cassandra node and notifies the session's connectObserver.
+func (s *Session) dial(host *HostInfo, connConfig *ConnConfig, errorHandler ConnErrorHandler) (*Conn, error) {
+	var obs ObservedConnect
+	if s.connectObserver != nil {
+		obs.Host = host
+		obs.Start = time.Now()
+	}
+
+	conn, err := s.dialWithoutObserver(host, connConfig, errorHandler)
+
+	if s.connectObserver != nil {
+		obs.End = time.Now()
+		obs.Err = err
+		s.connectObserver.ObserveConnect(obs)
+	}
+
+	return conn, err
+}
+
+// dialWithoutObserver establishes connection to a Cassandra node.
+//
+// dialWithoutObserver does not notify the connection observer, so you most probably want to call dial() instead.
+func (s *Session) dialWithoutObserver(host *HostInfo, cfg *ConnConfig, errorHandler ConnErrorHandler) (*Conn, error) {
 	ip := host.ConnectAddress()
 	port := host.port
 
@@ -199,12 +229,10 @@ func (s *Session) dial(host *HostInfo, cfg *ConnConfig, errorHandler ConnErrorHa
 		r:             bufio.NewReader(conn),
 		cfg:           cfg,
 		calls:         make(map[int]*callReq),
-		timeout:       cfg.Timeout,
 		version:       uint8(cfg.ProtoVersion),
 		addr:          conn.RemoteAddr().String(),
 		errorHandler:  errorHandler,
 		compressor:    cfg.Compressor,
-		auth:          cfg.Authenticator,
 		quit:          make(chan struct{}),
 		session:       s,
 		streams:       streams.New(cfg.ProtoVersion),
@@ -214,6 +242,15 @@ func (s *Session) dial(host *HostInfo, cfg *ConnConfig, errorHandler ConnErrorHa
 			w:       conn,
 			timeout: cfg.Timeout,
 		},
+	}
+
+	if cfg.AuthProvider != nil {
+		c.auth, err = cfg.AuthProvider(host)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		c.auth = cfg.Authenticator
 	}
 
 	var (
@@ -232,17 +269,21 @@ func (s *Session) dial(host *HostInfo, cfg *ConnConfig, errorHandler ConnErrorHa
 		conn:        c,
 	}
 
+	c.timeout = cfg.ConnectTimeout
 	if err := startup.setupConn(ctx); err != nil {
 		c.close()
 		return nil, err
 	}
 
+	c.timeout = cfg.Timeout
+
 	// dont coalesce startup frames
-	if s.cfg.WriteCoalesceWaitTime > 0 {
-		c.w = newWriteCoalescer(c.w, s.cfg.WriteCoalesceWaitTime, c.quit)
+	if s.cfg.WriteCoalesceWaitTime > 0 && !cfg.disableCoalesce {
+		c.w = newWriteCoalescer(conn, c.timeout, s.cfg.WriteCoalesceWaitTime, c.quit)
 	}
 
 	go c.serve()
+	go c.heartBeat()
 
 	return c, nil
 }
@@ -493,6 +534,53 @@ func (p *protocolError) Error() string {
 	return fmt.Sprintf("gocql: received unexpected frame on stream %d: %v", p.frame.Header().stream, p.frame)
 }
 
+func (c *Conn) heartBeat() {
+	sleepTime := 1 * time.Second
+	timer := time.NewTimer(sleepTime)
+	defer timer.Stop()
+
+	var failures int
+
+	for {
+		if failures > 5 {
+			c.closeWithError(fmt.Errorf("gocql: heartbeat failed"))
+			return
+		}
+
+		timer.Reset(sleepTime)
+
+		select {
+		case <-c.quit:
+			return
+		case <-timer.C:
+		}
+
+		framer, err := c.exec(context.Background(), &writeOptionsFrame{}, nil)
+		if err != nil {
+			failures++
+			continue
+		}
+
+		resp, err := framer.parseFrame()
+		if err != nil {
+			// invalid frame
+			failures++
+			continue
+		}
+
+		switch resp.(type) {
+		case *supportedFrame:
+			// Everything ok
+			sleepTime = 5 * time.Second
+			failures = 0
+		case error:
+			// TODO: should we do something here?
+		default:
+			panic(fmt.Sprintf("gocql: unknown frame in response to options: %T", resp))
+		}
+	}
+}
+
 func (c *Conn) recv() error {
 	// not safe for concurrent reads
 
@@ -639,19 +727,20 @@ func (c *deadlineWriter) Write(p []byte) (int, error) {
 	return c.w.Write(p)
 }
 
-func newWriteCoalescer(w io.Writer, d time.Duration, quit <-chan struct{}) *writeCoalescer {
+func newWriteCoalescer(conn net.Conn, timeout time.Duration, d time.Duration, quit <-chan struct{}) *writeCoalescer {
 	wc := &writeCoalescer{
 		writeCh: make(chan struct{}), // TODO: could this be sync?
 		cond:    sync.NewCond(&sync.Mutex{}),
-		w:       w,
+		c:       conn,
 		quit:    quit,
+		timeout: timeout,
 	}
 	go wc.writeFlusher(d)
 	return wc
 }
 
 type writeCoalescer struct {
-	w io.Writer
+	c net.Conn
 
 	quit    <-chan struct{}
 	writeCh chan struct{}
@@ -660,6 +749,7 @@ type writeCoalescer struct {
 	// cond waits for the buffer to be flushed
 	cond    *sync.Cond
 	buffers net.Buffers
+	timeout time.Duration
 
 	// result of the write
 	err error
@@ -671,10 +761,14 @@ func (w *writeCoalescer) flushLocked() {
 		return
 	}
 
+	if w.timeout > 0 {
+		w.c.SetWriteDeadline(time.Now().Add(w.timeout))
+	}
+
 	// Given we are going to do a fanout n is useless and according to
 	// the docs WriteTo should return 0 and err or bytes written and
 	// no error.
-	_, w.err = w.buffers.WriteTo(w.w)
+	_, w.err = w.buffers.WriteTo(w.c)
 	if w.err != nil {
 		w.buffers = nil
 	}
@@ -962,7 +1056,7 @@ func marshalQueryValue(typ TypeInfo, value interface{}, dst *queryValues) error 
 	return nil
 }
 
-func (c *Conn) executeQuery(qry *Query) *Iter {
+func (c *Conn) executeQuery(ctx context.Context, qry *Query) *Iter {
 	params := queryParams{
 		consistency: qry.cons,
 	}
@@ -990,7 +1084,7 @@ func (c *Conn) executeQuery(qry *Query) *Iter {
 	if qry.shouldPrepare() {
 		// Prepare all DML queries. Other queries can not be prepared.
 		var err error
-		info, err = c.prepareStatement(qry.context, qry.stmt, qry.trace)
+		info, err = c.prepareStatement(ctx, qry.stmt, qry.trace)
 		if err != nil {
 			return &Iter{err: err}
 		}
@@ -1041,7 +1135,7 @@ func (c *Conn) executeQuery(qry *Query) *Iter {
 		}
 	}
 
-	framer, err := c.exec(qry.context, frame, qry.trace)
+	framer, err := c.exec(ctx, frame, qry.trace)
 	if err != nil {
 		return &Iter{err: err}
 	}
@@ -1068,7 +1162,7 @@ func (c *Conn) executeQuery(qry *Query) *Iter {
 		if params.skipMeta {
 			if info != nil {
 				iter.meta = info.response
-				iter.meta.pagingState = x.meta.pagingState
+				iter.meta.pagingState = copyBytes(x.meta.pagingState)
 			} else {
 				return &Iter{framer: framer, err: errors.New("gocql: did not receive metadata but prepared info is nil")}
 			}
@@ -1076,11 +1170,10 @@ func (c *Conn) executeQuery(qry *Query) *Iter {
 			iter.meta = x.meta
 		}
 
-		if len(x.meta.pagingState) > 0 && !qry.disableAutoPage {
+		if x.meta.morePages() && !qry.disableAutoPage {
 			iter.next = &nextIter{
-				qry:  *qry,
-				pos:  int((1 - qry.prefetch) * float64(x.numRows)),
-				conn: c,
+				qry: qry,
+				pos: int((1 - qry.prefetch) * float64(x.numRows)),
 			}
 
 			iter.next.qry.pageState = copyBytes(x.meta.pagingState)
@@ -1094,7 +1187,7 @@ func (c *Conn) executeQuery(qry *Query) *Iter {
 		return &Iter{framer: framer}
 	case *schemaChangeKeyspace, *schemaChangeTable, *schemaChangeFunction, *schemaChangeAggregate, *schemaChangeType:
 		iter := &Iter{framer: framer}
-		if err := c.awaitSchemaAgreement(); err != nil {
+		if err := c.awaitSchemaAgreement(ctx); err != nil {
 			// TODO: should have this behind a flag
 			Logger.Println(err)
 		}
@@ -1105,7 +1198,7 @@ func (c *Conn) executeQuery(qry *Query) *Iter {
 	case *RequestErrUnprepared:
 		stmtCacheKey := c.session.stmtsLRU.keyFor(c.addr, c.currentKeyspace, qry.stmt)
 		if c.session.stmtsLRU.remove(stmtCacheKey) {
-			return c.executeQuery(qry)
+			return c.executeQuery(ctx, qry)
 		}
 
 		return &Iter{err: x, framer: framer}
@@ -1165,7 +1258,7 @@ func (c *Conn) UseKeyspace(keyspace string) error {
 	return nil
 }
 
-func (c *Conn) executeBatch(batch *Batch) *Iter {
+func (c *Conn) executeBatch(ctx context.Context, batch *Batch) *Iter {
 	if c.version == protoVersion1 {
 		return &Iter{err: ErrUnsupported}
 	}
@@ -1188,7 +1281,7 @@ func (c *Conn) executeBatch(batch *Batch) *Iter {
 		b := &req.statements[i]
 
 		if len(entry.Args) > 0 || entry.binding != nil {
-			info, err := c.prepareStatement(batch.context, entry.Stmt, nil)
+			info, err := c.prepareStatement(batch.Context(), entry.Stmt, nil)
 			if err != nil {
 				return &Iter{err: err}
 			}
@@ -1231,7 +1324,7 @@ func (c *Conn) executeBatch(batch *Batch) *Iter {
 	}
 
 	// TODO: should batch support tracing?
-	framer, err := c.exec(batch.context, req, nil)
+	framer, err := c.exec(batch.Context(), req, nil)
 	if err != nil {
 		return &Iter{err: err}
 	}
@@ -1252,7 +1345,7 @@ func (c *Conn) executeBatch(batch *Batch) *Iter {
 		}
 
 		if found {
-			return c.executeBatch(batch)
+			return c.executeBatch(ctx, batch)
 		} else {
 			return &Iter{err: x, framer: framer}
 		}
@@ -1271,13 +1364,13 @@ func (c *Conn) executeBatch(batch *Batch) *Iter {
 	}
 }
 
-func (c *Conn) query(statement string, values ...interface{}) (iter *Iter) {
+func (c *Conn) query(ctx context.Context, statement string, values ...interface{}) (iter *Iter) {
 	q := c.session.Query(statement, values...).Consistency(One)
 	q.trace = nil
-	return c.executeQuery(q)
+	return c.executeQuery(ctx, q)
 }
 
-func (c *Conn) awaitSchemaAgreement() (err error) {
+func (c *Conn) awaitSchemaAgreement(ctx context.Context) (err error) {
 	const (
 		peerSchemas  = "SELECT schema_version, peer FROM system.peers"
 		localSchemas = "SELECT schema_version FROM system.local WHERE key='local'"
@@ -1287,7 +1380,7 @@ func (c *Conn) awaitSchemaAgreement() (err error) {
 
 	endDeadline := time.Now().Add(c.session.cfg.MaxWaitSchemaAgreement)
 	for time.Now().Before(endDeadline) {
-		iter := c.query(peerSchemas)
+		iter := c.query(ctx, peerSchemas)
 
 		versions = make(map[string]struct{})
 
@@ -1307,7 +1400,7 @@ func (c *Conn) awaitSchemaAgreement() (err error) {
 			goto cont
 		}
 
-		iter = c.query(localSchemas)
+		iter = c.query(ctx, localSchemas)
 		for iter.Scan(&schemaVersion) {
 			versions[schemaVersion] = struct{}{}
 			schemaVersion = ""
@@ -1322,11 +1415,15 @@ func (c *Conn) awaitSchemaAgreement() (err error) {
 		}
 
 	cont:
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 
 	if err != nil {
-		return
+		return err
 	}
 
 	schemas := make([]string, 0, len(versions))
@@ -1338,10 +1435,8 @@ func (c *Conn) awaitSchemaAgreement() (err error) {
 	return fmt.Errorf("gocql: cluster schema versions not consistent: %+v", schemas)
 }
 
-const localHostInfo = "SELECT * FROM system.local WHERE key='local'"
-
-func (c *Conn) localHostInfo() (*HostInfo, error) {
-	row, err := c.query(localHostInfo).rowMap()
+func (c *Conn) localHostInfo(ctx context.Context) (*HostInfo, error) {
+	row, err := c.query(ctx, "SELECT * FROM system.local WHERE key='local'").rowMap()
 	if err != nil {
 		return nil, err
 	}

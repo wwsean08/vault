@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"golang.org/x/crypto/ssh/terminal"
+	"github.com/sirupsen/logrus/terminal"
 )
 
 func checkIfTerminal(w io.Writer) bool {
