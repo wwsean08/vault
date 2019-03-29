@@ -28,7 +28,6 @@ func TestClient_CreateListGetDeleteRole(t *testing.T) {
 	defer ts.Close()
 
 	client, err := NewClient(&ClientConfig{
-		Logger:   testLogger,
 		Username: esUsername,
 		Password: esPassword,
 		BaseURL:  ts.URL,
@@ -59,7 +58,6 @@ func TestClient_CreateGetDeleteUser(t *testing.T) {
 	defer ts.Close()
 
 	client, err := NewClient(&ClientConfig{
-		Logger:   testLogger,
 		Username: esUsername,
 		Password: esPassword,
 		BaseURL:  ts.URL,
@@ -94,7 +92,6 @@ func TestTLSClient(t *testing.T) {
 		ClientKey:  esHome + "/config/certs/elastic-certificates.key.pem",
 	}
 	client, err := NewClient(&ClientConfig{
-		Logger:    testLogger,
 		Username:  esUsername,
 		Password:  esPassword,
 		BaseURL:   ts.URL,
@@ -131,7 +128,6 @@ func TestClient_BadResponses(t *testing.T) {
 	defer ts.Close()
 
 	client, err := NewClient(&ClientConfig{
-		Logger:   testLogger,
 		Username: esUsername,
 		Password: esPassword,
 		BaseURL:  ts.URL,
