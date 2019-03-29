@@ -27,6 +27,38 @@ type ClientConfig struct {
 	TLSConfig                   *TLSConfig // may be nil to flag that TLS is not desired by the user
 }
 
+/*
+String prints the client config with the sensitive password omitted,
+with all fields at the top level, and with the TLS config always shown
+for explicitness. It produces a JSON string like this and is safe to log:
+
+{
+	"Username": "username",
+	"BaseURL": "http://localhost:9200",
+	"CACert": "",
+	"CAPath": "",
+	"ClientCert": "",
+	"ClientKey": "path/to/key.pem",
+	"TLSServerName": "",
+	"Insecure": false
+}
+*/
+func (c *ClientConfig) String() string {
+	tlsConfig := &TLSConfig{}
+	if c.TLSConfig != nil {
+		tlsConfig = c.TLSConfig
+	}
+	b, _ := json.Marshal(struct {
+		Username, BaseURL string
+		*TLSConfig
+	}{
+		Username:  c.Username,
+		BaseURL:   c.BaseURL,
+		TLSConfig: tlsConfig,
+	})
+	return fmt.Sprintf("%s", b)
+}
+
 // TLSConfig contains the parameters needed to configure TLS on the HTTP client
 // used to communicate with Elasticsearch.
 type TLSConfig struct {

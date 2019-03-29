@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -52,35 +53,36 @@ func (es *Elasticsearch) Type() (string, error) {
 }
 
 func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
+	es.logger.Debug("initializing...")
 	inboundConfig := &ClientConfig{
 		Logger: es.logger,
 	}
 
-	if raw, ok := rootConfig["url"]; ok {
-		inboundConfig.BaseURL, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"url" must be a string`)
-		}
-	} else {
-		return nil, errors.New(`"url" must be provided`)
-	}
-
-	if raw, ok := rootConfig["username"]; ok {
-		inboundConfig.Username, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"username" must be a string`)
-		}
-	} else {
+	raw, ok := rootConfig["username"]
+	if !ok {
 		return nil, errors.New(`"username" must be provided`)
 	}
+	inboundConfig.Username, ok = raw.(string)
+	if !ok {
+		return nil, errors.New(`"username" must be a string`)
+	}
 
-	if raw, ok := rootConfig["password"]; ok {
-		inboundConfig.Password, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"password" must be a string"`)
-		}
-	} else {
+	raw, ok = rootConfig["password"]
+	if !ok {
 		return nil, errors.New(`"password" must be provided`)
+	}
+	inboundConfig.Password, ok = raw.(string)
+	if !ok {
+		return nil, errors.New(`"password" must be a string"`)
+	}
+
+	raw, ok = rootConfig["url"]
+	if !ok {
+		return nil, errors.New(`"url" must be provided`)
+	}
+	inboundConfig.BaseURL, ok = raw.(string)
+	if !ok {
+		return nil, errors.New(`"url" must be a string`)
 	}
 
 	tlsConfigInbound := false
@@ -151,10 +153,12 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 		}
 	}
 	es.clientFactory.UpdateConfig(inboundConfig)
+	es.logger.Debug(fmt.Sprintf("successfully updated config to %s", inboundConfig))
 	return nil, nil
 }
 
 func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
+	es.logger.Debug("creating user...")
 	username, err := es.credentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
 		return "", "", err
@@ -184,11 +188,13 @@ func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Sta
 		if err := client.CreateRole(ctx.Done(), username, stmt.RoleToCreate); err != nil {
 			return "", "", err
 		}
+		es.logger.Debug("created role named %s", username)
 		user.Roles = []string{username}
 	}
 	if err := client.CreateUser(ctx.Done(), username, user); err != nil {
 		return "", "", err
 	}
+	es.logger.Debug(fmt.Sprintf("created user named %s", username))
 	return username, password, nil
 }
 
@@ -200,6 +206,7 @@ func (es *Elasticsearch) RenewUser(_ context.Context, _ dbplugin.Statements, _ s
 }
 
 func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Statements, username string) error {
+	es.logger.Debug(fmt.Sprintf("revoking user %s...", username))
 	stmt, err := newCreationStatement(statements)
 	if err != nil {
 		return err
@@ -217,17 +224,21 @@ func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Sta
 		if err := client.DeleteRole(ctx.Done(), username); err != nil {
 			errs = multierror.Append(errs, err)
 		}
+		es.logger.Debug(fmt.Sprintf("deleted role named %s", username))
 	}
 	// Same with the user. If it was already deleted on a previous attempt, there won't be an
 	// error.
 	if err := client.DeleteUser(ctx.Done(), username); err != nil {
 		errs = multierror.Append(errs, err)
 	}
+	es.logger.Debug(fmt.Sprintf("deleted user named %s", username))
 	return errs
 }
 
 func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements []string) (map[string]interface{}, error) {
+	es.logger.Debug("rotating root credentials...")
 	if len(statements) != 1 || statements[0] != "TRUE" {
+		es.logger.Debug(`root credential rotation is not enabled; to enable it, set revocation_statements="TRUE"`)
 		return nil, nil
 	}
 	newPassword, err := es.credentialProducer.GeneratePassword()
@@ -237,6 +248,7 @@ func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements [
 	if err := es.clientFactory.UpdatePassword(ctx.Done(), newPassword); err != nil {
 		return nil, err
 	}
+	es.logger.Debug("password updated")
 	return nil, nil
 }
 
@@ -276,8 +288,8 @@ type creationStatement struct {
 // clients for requests.
 // Rather than spread the mutex's logic across all endpoints, it's safer and clearer
 // to hold the synchronization within a factory that handles all the details.
-// It also results in less code repetition.
-// It also makes the raciness easier to unit test.
+// It also results in less code repetition, shorter periods of holding the lock,
+// and is easier to unit test.
 type clientFactory struct {
 	clientConfig *ClientConfig
 	mux          sync.Mutex

@@ -18,22 +18,30 @@ const (
 	esPassword = "buzz"
 )
 
-var testDoneChan = context.Background().Done()
+var (
+	testDoneChan = context.Background().Done()
+	testLogger   = hclog.Default()
+)
 
 func TestClient_CreateListGetDeleteRole(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(handleRequests))
 	defer ts.Close()
 
-	client, err := NewClient(testDoneChan, hclog.Default(), esUsername, esPassword, ts.URL)
+	client, err := NewClient(&ClientConfig{
+		Logger:   testLogger,
+		Username: esUsername,
+		Password: esPassword,
+		BaseURL:  ts.URL,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.CreateRole("role-name", map[string]interface{}{
+	if err := client.CreateRole(testDoneChan, "role-name", map[string]interface{}{
 		"cluster": []string{"manage_security"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	role, err := client.GetRole("role-name")
+	role, err := client.GetRole(testDoneChan, "role-name")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +49,7 @@ func TestClient_CreateListGetDeleteRole(t *testing.T) {
 	if clusterValue != "[all]" {
 		t.Fatalf("expected manage_security but received %s", clusterValue)
 	}
-	if err := client.DeleteRole("role-name"); err != nil {
+	if err := client.DeleteRole(testDoneChan, "role-name"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -50,20 +58,25 @@ func TestClient_CreateGetDeleteUser(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(handleRequests))
 	defer ts.Close()
 
-	client, err := NewClient(testDoneChan, hclog.Default(), esUsername, esPassword, ts.URL)
+	client, err := NewClient(&ClientConfig{
+		Logger:   testLogger,
+		Username: esUsername,
+		Password: esPassword,
+		BaseURL:  ts.URL,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.CreateUser("user-name", &User{
+	if err := client.CreateUser(testDoneChan, "user-name", &User{
 		Password: "pa55w0rd",
 		Roles:    []string{"vault"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.ChangePassword("user-name", "newPa55w0rd"); err != nil {
+	if err := client.ChangePassword(testDoneChan, "user-name", "newPa55w0rd"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DeleteUser("user-name"); err != nil {
+	if err := client.DeleteUser(testDoneChan, "user-name"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -80,18 +93,24 @@ func TestTLSClient(t *testing.T) {
 		ClientCert: esHome + "/config/certs/elastic-certificates.crt.pem",
 		ClientKey:  esHome + "/config/certs/elastic-certificates.key.pem",
 	}
-	client, err := NewClient(testDoneChan, hclog.Default(), esUsername, esPassword, ts.URL, tlsConfig)
+	client, err := NewClient(&ClientConfig{
+		Logger:    testLogger,
+		Username:  esUsername,
+		Password:  esPassword,
+		BaseURL:   ts.URL,
+		TLSConfig: tlsConfig,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	client.httpClient = ts.Client()
 
-	if err := client.CreateRole("role-name", map[string]interface{}{
+	if err := client.CreateRole(testDoneChan, "role-name", map[string]interface{}{
 		"cluster": []string{"manage_security"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	role, err := client.GetRole("role-name")
+	role, err := client.GetRole(testDoneChan, "role-name")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +118,7 @@ func TestTLSClient(t *testing.T) {
 	if clusterValue != "[all]" {
 		t.Fatalf("expected manage_security but received %s", clusterValue)
 	}
-	if err := client.DeleteRole("role-name"); err != nil {
+	if err := client.DeleteRole(testDoneChan, "role-name"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -111,21 +130,26 @@ func TestClient_BadResponses(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(giveBadResponses))
 	defer ts.Close()
 
-	client, err := NewClient(testDoneChan, hclog.Default(), esUsername, esPassword, ts.URL)
+	client, err := NewClient(&ClientConfig{
+		Logger:   testLogger,
+		Username: esUsername,
+		Password: esPassword,
+		BaseURL:  ts.URL,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetRole("200-but-body-changed"); err.Error() != "invalid character '<' looking for beginning of value; 200: <html>I switched to html!</html>" {
+	if _, err := client.GetRole(testDoneChan, "200-but-body-changed"); err.Error() != "invalid character '<' looking for beginning of value; 200: <html>I switched to html!</html>" {
 		t.Fatal(`expected "invalid character '<' looking for beginning of value; 200: <html>I switched to html!</html>"`)
 	}
-	if role, err := client.GetRole("404-not-found"); err != nil || role != nil {
+	if role, err := client.GetRole(testDoneChan, "404-not-found"); err != nil || role != nil {
 		// We shouldn't error on 404s because they are a success case.
 		t.Fatal(err)
 	}
-	if _, err := client.GetRole("500-mysterious-internal-server-error"); err.Error() != "500: <html>Internal Server Error</html>" {
+	if _, err := client.GetRole(testDoneChan, "500-mysterious-internal-server-error"); err.Error() != "500: <html>Internal Server Error</html>" {
 		t.Fatal(`expected "500: <html>Internal Server Error</html>"`)
 	}
-	if _, err := client.GetRole("503-unavailable"); err.Error() != "503: <html>Service Unavailable</html>" {
+	if _, err := client.GetRole(testDoneChan, "503-unavailable"); err.Error() != "503: <html>Service Unavailable</html>" {
 		t.Fatal(`expected "503: <html>Service Unavailable</html>"`)
 	}
 }
