@@ -24,7 +24,9 @@ import (
 type ClientConfig struct {
 	Logger                      hclog.Logger
 	Username, Password, BaseURL string
-	TLSConfig                   *TLSConfig // may be nil to flag that TLS is not desired by the user
+
+	// Leave this nil to flag that TLS is not desired
+	TLSConfig *TLSConfig
 }
 
 /*
@@ -85,17 +87,13 @@ type TLSConfig struct {
 }
 
 func NewClient(config *ClientConfig) (*Client, error) {
-
 	httpClient := cleanhttp.DefaultClient()
-
 	if config.TLSConfig != nil {
-
 		conf := &tls.Config{
 			ServerName:         config.TLSConfig.TLSServerName,
 			InsecureSkipVerify: config.TLSConfig.Insecure,
 			MinVersion:         tls.VersionTLS12,
 		}
-
 		if config.TLSConfig.ClientCert != "" && config.TLSConfig.ClientKey != "" {
 			clientCertificate, err := tls.LoadX509KeyPair(config.TLSConfig.ClientCert, config.TLSConfig.ClientKey)
 			if err != nil {
@@ -103,7 +101,6 @@ func NewClient(config *ClientConfig) (*Client, error) {
 			}
 			conf.Certificates = append(conf.Certificates, clientCertificate)
 		}
-
 		if config.TLSConfig.CACert != "" || config.TLSConfig.CAPath != "" {
 			rootConfig := &rootcerts.Config{
 				CAFile: config.TLSConfig.CACert,
@@ -113,10 +110,8 @@ func NewClient(config *ClientConfig) (*Client, error) {
 				return nil, err
 			}
 		}
-
 		httpClient.Transport = &http.Transport{TLSClientConfig: conf}
 	}
-
 	return &Client{
 		logger:     config.Logger,
 		username:   config.Username,
