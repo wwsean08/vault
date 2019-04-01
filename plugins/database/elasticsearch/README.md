@@ -1,5 +1,5 @@
-# Vault Plugin: Elasticsearch Database Secrets Backend
-This plugin provides dynamic, short-lived credentials for Elasticsearch using native X-Pack Security.
+# Vault Plugin: Elasticsearch Database Secrets Engine
+This plugin provides unique, short-lived credentials for Elasticsearch using native X-Pack Security.
 
 ## Getting Started
 
@@ -85,7 +85,7 @@ Now, Elasticsearch is configured and ready to be used with Vault.
 
 Here is an example of how to successfully configure and use this secrets engine using the Vault CLI.
 ```
-export ESHOME=/home/somewhere/Applications/elasticsearch-6.6.1
+export ES_HOME=/home/somewhere/Applications/elasticsearch-6.6.1
 
 vault secrets enable database
 
@@ -98,4 +98,53 @@ vault write database/config/my-elasticsearch-database \
     ca_cert=/usr/share/ca-certificates/extra/elastic-stack-ca.crt \
     client_cert=$ES_HOME/config/certs/elastic-certificates.crt.pem \
     client_key=$ES_HOME/config/certs/elastic-certificates.key.pem
+    
+# option one
+vault write database/roles/internally-defined-role \
+    db_name=my-elasticsearch-database \
+    creation_statements='{"elasticsearch_role_definition": {"indices": ["read"]}}'
+    
+vault read database/creds/internally-defined-role
+    
+# option two
+vault write database/roles/externally-defined-role \
+    db_name=my-elasticsearch-database \
+    creation_statements='{"elasticsearch_roles": ["vault"]'
+
+vault read database/creds/externally-defined-role
 ```
+
+## Developing the Elasticsearch Database Secrets Engine
+
+Docker can be a convenient way to run Elasticsearch locally on port 9200.
+```
+docker run -d \
+    --name elasticsearch \
+    -p 9200:9200 \
+    -e "discovery.type=single-node" \
+    elasticsearch:6.6.1
+```
+
+You can confirm ES is up using:
+```
+$ curl http://localhost:9200
+{
+  "name" : "5RWOGpe",
+  "cluster_name" : "docker-cluster",
+  "cluster_uuid" : "zedWR3K7RUaxmq3DNxrQkg",
+  "version" : {
+    "number" : "6.6.1",
+    "build_flavor" : "default",
+    "build_type" : "tar",
+    "build_hash" : "1fd8f69",
+    "build_date" : "2019-02-13T17:10:04.160291Z",
+    "build_snapshot" : false,
+    "lucene_version" : "7.6.0",
+    "minimum_wire_compatibility_version" : "5.6.0",
+    "minimum_index_compatibility_version" : "5.0.0"
+  },
+  "tagline" : "You Know, for Search"
+}
+```
+
+After starting it, go through Getting Started above to create an account Vault can use for creating dynamic credentials.
