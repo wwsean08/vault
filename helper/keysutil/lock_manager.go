@@ -107,6 +107,23 @@ func (lm *LockManager) GetCacheSize() int {
 	return lm.cache.Size()
 }
 
+func (lm *LockManager) SetCacheSize(size int) error {
+	switch {
+	case size < 0:
+		return errors.New("cache size must be greater or equal to zero")
+	case size == lm.GetCacheSize():
+		return fmt.Errorf("cache size is already set at: %d", size)
+	case size == 0:
+		lm.ConvertCacheToSyncmap()
+	case size > 0:
+		err := lm.ConvertCacheToLRU(size)
+		if err != nil {
+			return errwrap.Wrapf("failed to create cache: {{err}}", err)
+		}
+	}
+	return nil
+}
+
 func (lm *LockManager) CacheActive() bool {
 	return lm.useCache
 }
