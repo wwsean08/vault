@@ -102,14 +102,18 @@ vault write database/config/my-elasticsearch-database \
 # create and get creds with one type of role
 vault write database/roles/internally-defined-role \
     db_name=my-elasticsearch-database \
-    creation_statements='{"elasticsearch_role_definition": {"indices": ["read"]}}'
+    creation_statements='{"elasticsearch_role_definition": {"indices": ["read"]}}' \
+    default_ttl="1h" \
+    max_ttl="24h"
     
 vault read database/creds/internally-defined-role
     
 # create and get creds with another type of role
 vault write database/roles/externally-defined-role \
     db_name=my-elasticsearch-database \
-    creation_statements='{"elasticsearch_roles": ["vault"]}'
+    creation_statements='{"elasticsearch_roles": ["vault"]}' \
+    default_ttl="1h" \
+    max_ttl="24h"
 
 vault read database/creds/externally-defined-role
 
