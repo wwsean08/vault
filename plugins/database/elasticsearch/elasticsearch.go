@@ -225,9 +225,6 @@ func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Sta
 }
 
 func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements []string) (map[string]interface{}, error) {
-	if len(statements) != 1 || statements[0] != "TRUE" {
-		return nil, nil
-	}
 	newPassword, err := es.credentialProducer.GeneratePassword()
 	if err != nil {
 		return nil, errwrap.Wrapf("unable to generate root password: {{err}}", err)
@@ -253,7 +250,7 @@ func newCreationStatement(statements dbplugin.Statements) (*creationStatement, e
 	if len(statements.Creation) == 0 {
 		return nil, dbutil.ErrEmptyCreationStatement
 	}
-	var stmt *creationStatement
+	stmt := &creationStatement{}
 	if err := json.Unmarshal([]byte(statements.Creation[0]), stmt); err != nil {
 		return nil, errwrap.Wrapf(fmt.Sprintf("unable to unmarshal %s: {{err}}", []byte(statements.Creation[0])), err)
 	}

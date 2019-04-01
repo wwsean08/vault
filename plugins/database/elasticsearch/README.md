@@ -91,7 +91,7 @@ vault secrets enable database
 
 vault write database/config/my-elasticsearch-database \
     plugin_name="elasticsearch-database-plugin" \
-    allowed_roles="my-role" \
+    allowed_roles="internally-defined-role,externally-defined-role" \
     username=vault \
     password=dJTCIGtndaksCbHM7X6or7tGOuwzf1Qb \
     url=http://localhost:9200 \
@@ -99,19 +99,22 @@ vault write database/config/my-elasticsearch-database \
     client_cert=$ES_HOME/config/certs/elastic-certificates.crt.pem \
     client_key=$ES_HOME/config/certs/elastic-certificates.key.pem
     
-# option one
+# create and get creds with one type of role
 vault write database/roles/internally-defined-role \
     db_name=my-elasticsearch-database \
     creation_statements='{"elasticsearch_role_definition": {"indices": ["read"]}}'
     
 vault read database/creds/internally-defined-role
     
-# option two
+# create and get creds with another type of role
 vault write database/roles/externally-defined-role \
     db_name=my-elasticsearch-database \
-    creation_statements='{"elasticsearch_roles": ["vault"]'
+    creation_statements='{"elasticsearch_roles": ["vault"]}'
 
 vault read database/creds/externally-defined-role
+
+# rotate root credentials
+vault write -force database/rotate-root/my-elasticsearch-database
 ```
 
 ## Developing the Elasticsearch Database Secrets Engine
