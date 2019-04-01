@@ -45,24 +45,9 @@ func (b *backend) pathCacheConfig() *framework.Path {
 func (b *backend) pathCacheConfigWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	// get target size
 	cacheSize := d.Get("size").(int)
-
-	// err if size is negative
-	if cacheSize < 0 {
-		return logical.ErrorResponse("size must be greater or equal to zero"), logical.ErrInvalidRequest
-	}
-
-	// convert the cache if the specified size is different from the size of the active cache
-	if cacheSize == b.lm.GetCacheSize() {
-		return nil, nil
-	}
-
-	if cacheSize == 0 {
-		b.lm.ConvertCacheToSyncmap()
-	} else {
-		err := b.lm.ConvertCacheToLRU(cacheSize)
-		if err != nil {
-			return nil, errwrap.Wrapf("failed to create cache: {{err}}", err)
-		}
+	err := b.lm.SetCacheSize(cacheSize)
+	if err != nil {
+		return nil, errwrap.Wrapf("failed to set cache size: {{err}}", err)
 	}
 
 	// store cache size
@@ -75,7 +60,6 @@ func (b *backend) pathCacheConfigWrite(ctx context.Context, req *logical.Request
 	if err := req.Storage.Put(ctx, entry); err != nil {
 		return nil, err
 	}
-
 	return nil, nil
 }
 
