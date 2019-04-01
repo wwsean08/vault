@@ -68,11 +68,11 @@ func NewLockManager(cacheDisabled bool) *LockManager {
 		keyLocks:  locksutil.CreateLocks(),
 		lock:      sync.RWMutex{},
 	}
-	lm.ConvertCacheToSyncmap()
+	lm.convertCacheToSyncmap()
 	return lm
 }
 
-func (lm *LockManager) ConvertCacheToLRU(size int) error {
+func (lm *LockManager) convertCacheToLRU(size int) error {
 	lm.lock.Lock()
 	defer lm.lock.Unlock()
 	// update LockManager
@@ -85,19 +85,12 @@ func (lm *LockManager) ConvertCacheToLRU(size int) error {
 	return nil
 }
 
-func (lm *LockManager) ConvertCacheToSyncmap() {
+func (lm *LockManager) convertCacheToSyncmap() {
 	lm.lock.Lock()
 	defer lm.lock.Unlock()
 	// update LockManager
 	lm.cacheType = SyncMap
 	lm.cache = NewTransitSyncMap()
-}
-
-func (lm *LockManager) GetCacheType() CacheType {
-	// Locked because lm.cache could change
-	lm.lock.RLock()
-	defer lm.lock.RUnlock()
-	return lm.cacheType
 }
 
 func (lm *LockManager) GetCacheSize() int {
@@ -112,11 +105,10 @@ func (lm *LockManager) SetCacheSize(size int) error {
 	case size < 0:
 		return errors.New("cache size must be greater or equal to zero")
 	case size == lm.GetCacheSize():
-		return fmt.Errorf("cache size is already set at: %d", size)
 	case size == 0:
-		lm.ConvertCacheToSyncmap()
+		lm.convertCacheToSyncmap()
 	case size > 0:
-		err := lm.ConvertCacheToLRU(size)
+		err := lm.convertCacheToLRU(size)
 		if err != nil {
 			return errwrap.Wrapf("failed to create cache: {{err}}", err)
 		}
