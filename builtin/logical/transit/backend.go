@@ -80,9 +80,7 @@ func (b *backend) initializeCache(ctx context.Context, s logical.Storage) error 
 		if err := entry.DecodeJSON(&storedCacheSize); err != nil {
 			return err
 		}
-		if storedCacheSize.Size > 0 {
-			return b.lm.ConvertCacheToLRU(storedCacheSize.Size)
-		}
+		b.lm.SetCacheSize(storedCacheSize.Size)
 	}
 	return nil
 }
