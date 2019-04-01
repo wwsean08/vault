@@ -117,6 +117,12 @@ vault write database/roles/externally-defined-role \
 
 vault read database/creds/externally-defined-role
 
+# renew credentials
+vault lease renew database/creds/internally-defined-role/nvJ6SveX9PN1E4BlxVWdKuX1
+
+# revoke credentials
+vault lease revoke database/creds/internally-defined-role/nvJ6SveX9PN1E4BlxVWdKuX1
+
 # rotate root credentials
 vault write -force database/rotate-root/my-elasticsearch-database
 ```

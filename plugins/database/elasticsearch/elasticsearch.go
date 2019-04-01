@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/errwrap"
-
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
@@ -51,6 +50,7 @@ func (es *Elasticsearch) Type() (string, error) {
 	return "elasticsearch", nil
 }
 
+// Init is called on `$ vault write database/config/:db-name`.
 func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
 	inboundConfig := &ClientConfig{}
 
@@ -152,7 +152,10 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 	return nil, nil
 }
 
+// CreateUser is called on `$ vault read database/creds/:role-name`
+// and it's the first time anything is touched from `$ vault write database/roles/:role-name`.
 func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
+	return "foo", "foo", nil
 	username, err := es.credentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
 		return "", "", errwrap.Wrapf(fmt.Sprintf("unable to generate username for %q: {{err}}", usernameConfig), err)
@@ -190,13 +193,16 @@ func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Sta
 	return username, password, nil
 }
 
+// RenewUser gets called on `$ vault lease renew {{lease-id}}`. It automatically pushes out the amount of time until
+// the database secrets engine calls RevokeUser, if appropriate.
 func (es *Elasticsearch) RenewUser(_ context.Context, _ dbplugin.Statements, _ string, _ time.Time) error {
 	// This is not implemented because you can't put an expiration on roles or users. They can only be created
-	// and explicitly revoked. Normally, this function would update a "VALID UNTIL" statement on a database user
-	// but there's no similar need here.
+	// and explicitly revoked. (Normally, this function would update a "VALID UNTIL" statement on a database user
+	// but there's no similar need here.)
 	return nil
 }
 
+// RevokeUser is called when a lease expires.
 func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Statements, username string) error {
 	stmt, err := newCreationStatement(statements)
 	if err != nil {
