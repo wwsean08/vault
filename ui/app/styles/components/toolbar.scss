@@ -1,13 +1,54 @@
 .toolbar {
   align-items: center;
   background-color: $ui-gray-010;
+  border-top: $base-border;
   display: flex;
   height: 44px;
   justify-content: space-between;
-  padding: 2px;
-  border-top: $base-border;
+  overflow: auto;
+
+  @include from($mobile) {
+    padding: 0 $spacing-xxs;
+  }
+
+  .input {
+    min-width: 160px;
+  }
+}
+
+.toolbar-filters,
+.toolbar-actions {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  white-space: nowrap;
 
   & > * {
     margin: 0 $spacing-xxs;
+  }
+}
+
+.toolbar-actions {
+  @include from($mobile) {
+    justify-content: flex-end;
+  }
+}
+
+.toolbar-button {
+  @extend .button;
+  @extend .is-ghost;
+  @extend .has-icon-right;
+  background-color: $ui-gray-050;
+  border: 0;
+  color: $black;
+
+  &:hover {
+    background-color: $ui-gray-100;
+    border: 0;
+    color: $blue;
+  }
+
+  &:active {
+    box-shadow: none;
   }
 }

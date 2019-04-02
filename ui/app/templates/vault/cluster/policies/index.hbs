@@ -10,12 +10,6 @@
         {{/unless}}
       </h1>
     </p.levelLeft>
-    <p.levelRight>
-      {{#link-to "vault.cluster.policies.create" class="button has-icon-right is-ghost is-compact" data-test-policy-create-link=true}}
-        Create {{uppercase policyType}} policy
-        {{i-con glyph="chevron-right" size=11}}
-      {{/link-to}}
-    </p.levelRight>
   </PageHeader>
   {{#if model.meta.total}}
     <Toolbar>
@@ -43,6 +37,11 @@
           {{/if}}
         {{/if}}
       </ToolbarFilters>
+      <ToolbarActions>
+        <ToolbarButton @params={{array 'vault.cluster.policies.create'}} @data-test-policy-create-link=true>
+          Create {{uppercase policyType}} policy
+        </ToolbarButton>
+      </ToolbarActions>
     </Toolbar>
     {{#each model as |item|}}
       {{#if (eq item.id "root")}}
