@@ -1,3 +1,7 @@
+.tabs-container + .toolbar {
+  border-top: 0;
+}
+
 .toolbar {
   align-items: center;
   background-color: $ui-gray-010;
@@ -5,7 +9,17 @@
   display: flex;
   height: 44px;
   justify-content: space-between;
-  overflow: auto;
+  overflow-x: auto;
+
+  &::-webkit-scrollbar {
+    border-bottom: $base-border;
+    height: $spacing-xxs;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: $ui-gray-300;
+    border-radius: $spacing-xxs;
+  }
 
   @include from($mobile) {
     padding: 0 $spacing-xxs;
@@ -25,6 +39,14 @@
 
   & > * {
     margin: 0 $spacing-xxs;
+  }
+}
+
+.toolbar-filters + .toolbar-actions {
+  @include until($mobile) {
+    border-left: $base-border;
+    margin-left: $spacing-xs;
+    padding-left: $spacing-xs;
   }
 }
 
