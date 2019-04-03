@@ -11,7 +11,7 @@ To use it, you may need to enable a 30-day trial with Elasticsearch, or activate
 
 Read [Securing the Elastic Stack](https://www.elastic.co/guide/en/x-pack/current/elasticsearch-security.html) and 
 follow [its instructions for enabling X-Pack Security](https://www.elastic.co/guide/en/elasticsearch/reference/current/setup-xpack.html). 
-When done, verify that you've enabled X-Pack by running `$ $ESHOME/bin/elasticsearch-setup-passwords interactive`. You'll
+When done, verify that you've enabled X-Pack by running `$ $ES_HOME/bin/elasticsearch-setup-passwords interactive`. You'll
 know its been set up successfully if it takes you through a number of password-inputting steps.
 
 ### Recommended: Enable Encrypted Communications
@@ -42,7 +42,7 @@ To do this, first create a role that will allow Vault the minimum privileges nee
 POST to ElasticSearch. The following example is in Python, and you'll need to replace "username" and "password" to real values,
 and also will need to replace "http://localhost:9200" with your ElasticSearch URL. For the username and password, we used the `elastic`
 username, which is the name for the built-in superuser, and the password that we set for that user previously in the 
-`$ $ESHOME/bin/elasticsearch-setup-passwords interactive` step.
+`$ $ES_HOME/bin/elasticsearch-setup-passwords interactive` step.
 ```
 >>> import requests
 >>> import json
