@@ -52,3 +52,10 @@
     box-shadow: none;
   }
 }
+
+.toolbar-separator {
+  border-right: $light-border;
+  height: 32px;
+  margin: 0 $spacing-xs;
+  width: 0;
+}
