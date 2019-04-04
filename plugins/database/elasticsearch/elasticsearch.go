@@ -52,116 +52,55 @@ func (es *Elasticsearch) Type() (string, error) {
 	return "elasticsearch", nil
 }
 
-func toClientConfig(rootConfig map[string]interface{}) (*ClientConfig, error) {
-
-	clientConfig := &ClientConfig{}
-
-	raw, ok := rootConfig["username"]
-	if !ok {
-		return nil, errors.New(`"username" must be provided`)
-	}
-	clientConfig.Username, ok = raw.(string)
-	if !ok {
-		return nil, errors.New(`"username" must be a string`)
-	}
-
-	raw, ok = rootConfig["password"]
-	if !ok {
-		return nil, errors.New(`"password" must be provided`)
-	}
-	clientConfig.Password, ok = raw.(string)
-	if !ok {
-		return nil, errors.New(`"password" must be a string"`)
-	}
-
-	raw, ok = rootConfig["url"]
-	if !ok {
-		return nil, errors.New(`"url" must be provided`)
-	}
-	clientConfig.BaseURL, ok = raw.(string)
-	if !ok {
-		return nil, errors.New(`"url" must be a string`)
-	}
-
-	tlsConfigInbound := false
-	inboundTLSConfig := &TLSConfig{}
-
-	if raw, ok := rootConfig["ca_cert"]; ok {
-		inboundTLSConfig.CACert, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"ca_cert" must be a string`)
-		}
-		tlsConfigInbound = true
-	}
-	if raw, ok := rootConfig["ca_path"]; ok {
-		inboundTLSConfig.CAPath, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"ca_path" must be a string`)
-		}
-		tlsConfigInbound = true
-	}
-	if raw, ok := rootConfig["client_cert"]; ok {
-		inboundTLSConfig.ClientCert, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"client_cert" must be a string`)
-		}
-		tlsConfigInbound = true
-	}
-	if raw, ok := rootConfig["client_key"]; ok {
-		inboundTLSConfig.ClientKey, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"client_key" must be a string`)
-		}
-		tlsConfigInbound = true
-	}
-	if raw, ok := rootConfig["tls_server_name"]; ok {
-		inboundTLSConfig.TLSServerName, ok = raw.(string)
-		if !ok {
-			return nil, errors.New(`"tls_server_name" must be a string`)
-		}
-		tlsConfigInbound = true
-	}
-	if raw, ok := rootConfig["insecure"]; ok {
-		inboundTLSConfig.Insecure, ok = raw.(bool)
-		if !ok {
-			return nil, errors.New(`"insecure" must be a bool`)
-		}
-		tlsConfigInbound = true
-	}
-
-	// If no TLS config was provided, the user probably doesn't want TLS.
-	// We flag this to the client by leaving the TLS config pointer nil. So, we should
-	// only fulfill this pointer if the user actually wants TLS.
-	if tlsConfigInbound {
-		clientConfig.TLSConfig = inboundTLSConfig
-	}
-	return clientConfig, nil
-}
-
 // Init is called on `$ vault write database/config/:db-name`.
 // or when you do a creds call after Vault's been restarted.
 func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
 
-	inboundConfig, err := toClientConfig(config)
-	if err != nil {
-		return nil, errwrap.Wrapf(fmt.Sprintf("couldn't convert %s to client config: {{err}}", config), err)
+	// Validate the config to provide immediate feedback to the user if it's not valid.
+	// Ensure required string fields are provided in the expected format.
+	for _, requiredField := range []string{"username", "password", "url"} {
+		raw, ok := config[requiredField]
+		if !ok {
+			return nil, fmt.Errorf(`%q must be provided`, requiredField)
+		}
+		if _, ok := raw.(string); !ok {
+			return nil, fmt.Errorf(`%q must be a string`, requiredField)
+		}
 	}
 
-	// Let's always do an initial check that the client config at least _looks_ reasonable.
-	inboundClient, err := NewClient(inboundConfig)
+	// Ensure optional string fields are provided in the expected format.
+	for _, optionalField := range []string{"ca_cert", "ca_path", "client_cert", "client_key", "tls_server_name"} {
+		if raw, ok := config[optionalField]; ok {
+			if _, ok = raw.(string); !ok {
+				return nil, fmt.Errorf(`%q must be a string`, optionalField)
+			}
+		}
+	}
+
+	// Check the one optional bool field is in the expected format.
+	if raw, ok := config["insecure"]; ok {
+		if _, ok = raw.(bool); !ok {
+			return nil, errors.New(`"insecure" must be a bool`)
+		}
+	}
+
+	// Test the given config to see if we can make a client.
+	client, err := buildClient(config)
 	if err != nil {
 		return nil, errwrap.Wrapf("couldn't make client with inbound config: {{err}}", err)
 	}
 
+	// Optionally, test the given config to see if we can make a successful call.
 	if verifyConnection {
 		// Whether this role is found or unfound, if we're configured correctly there will
 		// be no err from the call. However, if something is misconfigured, this will yield
 		// an error response, which will be described in the returned error.
-		if _, err := inboundClient.GetRole(ctx.Done(), "vault-test"); err != nil {
+		if _, err := client.GetRole(ctx.Done(), "vault-test"); err != nil {
 			return nil, errwrap.Wrapf("client test of getting a role failed: {{err}}", err)
 		}
 	}
 
+	// Update to the new config in a race-safe manner.
 	es.mux.Lock()
 	defer es.mux.Unlock()
 	es.config = config
@@ -191,17 +130,13 @@ func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Sta
 		Roles:    stmt.PreexistingRoles,
 	}
 
+	// Don't let anyone change the config while we're using it for our current client.
 	es.mux.Lock()
 	defer es.mux.Unlock()
 
-	clientConfig, err := toClientConfig(es.config)
+	client, err := buildClient(es.config)
 	if err != nil {
 		return "", "", errwrap.Wrapf("unable to get client: {{err}}", err)
-	}
-	client, err := NewClient(clientConfig)
-	if err != nil {
-		// TODO errwrap
-		return "", "", err
 	}
 	if len(stmt.RoleToCreate) > 0 {
 		if err := client.CreateRole(ctx.Done(), username, stmt.RoleToCreate); err != nil {
@@ -231,17 +166,13 @@ func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Sta
 		return errwrap.Wrapf("unable to read creation_statements: {{err}}", err)
 	}
 
+	// Don't let anyone change the config while we're using it for our current client.
 	es.mux.Lock()
 	defer es.mux.Unlock()
 
-	clientConfig, err := toClientConfig(es.config)
+	client, err := buildClient(es.config)
 	if err != nil {
 		return errwrap.Wrapf("unable to get client: {{err}}", err)
-	}
-	client, err := NewClient(clientConfig)
-	if err != nil {
-		// TODO errwrap
-		return err
 	}
 
 	var errs error
@@ -266,21 +197,17 @@ func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements [
 		return nil, errwrap.Wrapf("unable to generate root password: {{err}}", err)
 	}
 
+	// Don't let anyone use the config while we're in the process of rotating the password.
 	es.mux.Lock()
 	defer es.mux.Unlock()
 
-	clientConfig, err := toClientConfig(es.config)
+	client, err := buildClient(es.config)
 	if err != nil {
 		return nil, errwrap.Wrapf("unable to get client: {{err}}", err)
 	}
-	client, err := NewClient(clientConfig)
-	if err != nil {
-		// TODO errwrap
-		return nil, err
-	}
 
 	if err := client.ChangePassword(ctx.Done(), es.config["username"].(string), newPassword); err != nil {
-		return nil, err
+		return nil, errwrap.Wrapf("unable to change password: {{}}", err)
 	}
 
 	es.config["password"] = newPassword
@@ -315,4 +242,57 @@ func newCreationStatement(statements dbplugin.Statements) (*creationStatement, e
 type creationStatement struct {
 	PreexistingRoles []string               `json:"elasticsearch_roles"`
 	RoleToCreate     map[string]interface{} `json:"elasticsearch_role_definition"`
+}
+
+func buildClient(config map[string]interface{}) (*Client, error) {
+
+	clientConfig := &ClientConfig{}
+
+	// We can presume these required fields are provided by strings
+	// because they're validated in Init.
+	clientConfig.Username = config["username"].(string)
+	clientConfig.Password = config["password"].(string)
+	clientConfig.BaseURL = config["url"].(string)
+
+	hasTLSConf := false
+	tlsConf := &TLSConfig{}
+
+	// We can presume that if these are provided, they're in the expected format
+	// because they're also validated in Init.
+	if raw, ok := config["ca_cert"]; ok {
+		tlsConf.CACert = raw.(string)
+		hasTLSConf = true
+	}
+	if raw, ok := config["ca_path"]; ok {
+		tlsConf.CAPath = raw.(string)
+		hasTLSConf = true
+	}
+	if raw, ok := config["client_cert"]; ok {
+		tlsConf.ClientCert = raw.(string)
+		hasTLSConf = true
+	}
+	if raw, ok := config["client_key"]; ok {
+		tlsConf.ClientKey = raw.(string)
+		hasTLSConf = true
+	}
+	if raw, ok := config["tls_server_name"]; ok {
+		tlsConf.TLSServerName = raw.(string)
+		hasTLSConf = true
+	}
+	if raw, ok := config["insecure"]; ok {
+		tlsConf.Insecure = raw.(bool)
+		hasTLSConf = true
+	}
+
+	// We should only fulfill the clientConfig's TLSConfig pointer if we actually
+	// want the client to use TLS.
+	if hasTLSConf {
+		clientConfig.TLSConfig = tlsConf
+	}
+
+	client, err := NewClient(clientConfig)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
