@@ -20,8 +20,12 @@ import (
 // Elasticsearch implements dbplugin's Database interface
 type Elasticsearch struct {
 	credentialProducer credsutil.CredentialsProducer
-	clientFactory      *clientFactory
-	configHandler      *configHandler
+
+	// mux protects the config from races
+	mux sync.Mutex
+
+	// the root credential config
+	config map[string]interface{}
 }
 
 func New() (interface{}, error) {
@@ -32,10 +36,6 @@ func New() (interface{}, error) {
 			UsernameLen:    100,
 			Separator:      "-",
 		},
-		clientFactory: &clientFactory{
-			clientConfig: &ClientConfig{},
-		},
-		configHandler: &configHandler{},
 	}, nil
 }
 
@@ -52,16 +52,15 @@ func (es *Elasticsearch) Type() (string, error) {
 	return "elasticsearch", nil
 }
 
-// Init is called on `$ vault write database/config/:db-name`.
-// or when you do a creds call after Vault's been restarted.
-func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
-	inboundConfig := &ClientConfig{}
+func toClientConfig(rootConfig map[string]interface{}) (*ClientConfig, error) {
+
+	clientConfig := &ClientConfig{}
 
 	raw, ok := rootConfig["username"]
 	if !ok {
 		return nil, errors.New(`"username" must be provided`)
 	}
-	inboundConfig.Username, ok = raw.(string)
+	clientConfig.Username, ok = raw.(string)
 	if !ok {
 		return nil, errors.New(`"username" must be a string`)
 	}
@@ -70,7 +69,7 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 	if !ok {
 		return nil, errors.New(`"password" must be provided`)
 	}
-	inboundConfig.Password, ok = raw.(string)
+	clientConfig.Password, ok = raw.(string)
 	if !ok {
 		return nil, errors.New(`"password" must be a string"`)
 	}
@@ -79,7 +78,7 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 	if !ok {
 		return nil, errors.New(`"url" must be provided`)
 	}
-	inboundConfig.BaseURL, ok = raw.(string)
+	clientConfig.BaseURL, ok = raw.(string)
 	if !ok {
 		return nil, errors.New(`"url" must be a string`)
 	}
@@ -134,7 +133,18 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 	// We flag this to the client by leaving the TLS config pointer nil. So, we should
 	// only fulfill this pointer if the user actually wants TLS.
 	if tlsConfigInbound {
-		inboundConfig.TLSConfig = inboundTLSConfig
+		clientConfig.TLSConfig = inboundTLSConfig
+	}
+	return clientConfig, nil
+}
+
+// Init is called on `$ vault write database/config/:db-name`.
+// or when you do a creds call after Vault's been restarted.
+func (es *Elasticsearch) Init(ctx context.Context, config map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
+
+	inboundConfig, err := toClientConfig(config)
+	if err != nil {
+		return nil, errwrap.Wrapf(fmt.Sprintf("couldn't convert %s to client config: {{err}}", config), err)
 	}
 
 	// Let's always do an initial check that the client config at least _looks_ reasonable.
@@ -151,12 +161,11 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 			return nil, errwrap.Wrapf("client test of getting a role failed: {{err}}", err)
 		}
 	}
-	es.clientFactory.UpdateConfig(inboundConfig)
 
-	// Returning the root config here persists it to storage across shutdowns.
-	// We also need to retain it for root credential rotation.
-	es.configHandler.SetConfig(rootConfig)
-	return es.configHandler.GetConfig(), nil
+	es.mux.Lock()
+	defer es.mux.Unlock()
+	es.config = config
+	return es.config, nil
 }
 
 // CreateUser is called on `$ vault read database/creds/:role-name`
@@ -182,11 +191,18 @@ func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Sta
 		Roles:    stmt.PreexistingRoles,
 	}
 
-	client, err := es.clientFactory.GetClient()
+	es.mux.Lock()
+	defer es.mux.Unlock()
+
+	clientConfig, err := toClientConfig(es.config)
 	if err != nil {
 		return "", "", errwrap.Wrapf("unable to get client: {{err}}", err)
 	}
-
+	client, err := NewClient(clientConfig)
+	if err != nil {
+		// TODO errwrap
+		return "", "", err
+	}
 	if len(stmt.RoleToCreate) > 0 {
 		if err := client.CreateRole(ctx.Done(), username, stmt.RoleToCreate); err != nil {
 			return "", "", errwrap.Wrapf(fmt.Sprintf("unable to create role name %s, role definition %q: {{err}}", username, stmt.RoleToCreate), err)
@@ -215,9 +231,17 @@ func (es *Elasticsearch) RevokeUser(ctx context.Context, statements dbplugin.Sta
 		return errwrap.Wrapf("unable to read creation_statements: {{err}}", err)
 	}
 
-	client, err := es.clientFactory.GetClient()
+	es.mux.Lock()
+	defer es.mux.Unlock()
+
+	clientConfig, err := toClientConfig(es.config)
 	if err != nil {
 		return errwrap.Wrapf("unable to get client: {{err}}", err)
+	}
+	client, err := NewClient(clientConfig)
+	if err != nil {
+		// TODO errwrap
+		return err
 	}
 
 	var errs error
@@ -241,14 +265,26 @@ func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements [
 	if err != nil {
 		return nil, errwrap.Wrapf("unable to generate root password: {{err}}", err)
 	}
-	if err := es.clientFactory.UpdatePassword(ctx.Done(), newPassword); err != nil {
-		return nil, errwrap.Wrapf("unable to update root password: {{err}}", err)
+
+	es.mux.Lock()
+	defer es.mux.Unlock()
+
+	clientConfig, err := toClientConfig(es.config)
+	if err != nil {
+		return nil, errwrap.Wrapf("unable to get client: {{err}}", err)
 	}
-	rootConfig := es.configHandler.GetConfig()
-	rootConfig["password"] = newPassword
-	es.configHandler.SetConfig(rootConfig)
-	// We need to return the updated config to persist it to storage.
-	return es.configHandler.GetConfig(), nil
+	client, err := NewClient(clientConfig)
+	if err != nil {
+		// TODO errwrap
+		return nil, err
+	}
+
+	if err := client.ChangePassword(ctx.Done(), es.config["username"].(string), newPassword); err != nil {
+		return nil, err
+	}
+
+	es.config["password"] = newPassword
+	return es.config, nil
 }
 
 func (es *Elasticsearch) Close() error {
@@ -279,59 +315,4 @@ func newCreationStatement(statements dbplugin.Statements) (*creationStatement, e
 type creationStatement struct {
 	PreexistingRoles []string               `json:"elasticsearch_roles"`
 	RoleToCreate     map[string]interface{} `json:"elasticsearch_role_definition"`
-}
-
-type configHandler struct {
-	config map[string]interface{}
-	mux    sync.Mutex
-}
-
-func (h *configHandler) SetConfig(config map[string]interface{}) {
-	h.mux.Lock()
-	defer h.mux.Unlock()
-	h.config = config
-}
-
-func (h *configHandler) GetConfig() map[string]interface{} {
-	h.mux.Lock()
-	defer h.mux.Unlock()
-	return h.config
-}
-
-// clientFactory prevents races because both the config endpoint and the rotate root action
-// could be acting upon the password, right when the password is being read to create new
-// clients for requests.
-// Rather than spread the mutex's logic across all endpoints, it's safer and clearer
-// to hold the synchronization within a factory that handles all the details.
-// It also results in less code repetition, shorter periods of holding the lock,
-// and is easier to unit test.
-type clientFactory struct {
-	clientConfig *ClientConfig
-	mux          sync.Mutex
-}
-
-func (f *clientFactory) GetClient() (*Client, error) {
-	f.mux.Lock()
-	defer f.mux.Unlock()
-	return NewClient(f.clientConfig)
-}
-
-func (f *clientFactory) UpdateConfig(clientConfig *ClientConfig) {
-	f.mux.Lock()
-	defer f.mux.Unlock()
-	f.clientConfig = clientConfig
-}
-
-func (f *clientFactory) UpdatePassword(done <-chan struct{}, newPassword string) error {
-	client, err := f.GetClient()
-	if err != nil {
-		return err
-	}
-	f.mux.Lock()
-	defer f.mux.Unlock()
-	if err := client.ChangePassword(done, f.clientConfig.Username, newPassword); err != nil {
-		return err
-	}
-	f.clientConfig.Password = newPassword
-	return nil
 }
