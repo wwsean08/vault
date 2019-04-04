@@ -21,6 +21,7 @@ import (
 type Elasticsearch struct {
 	credentialProducer credsutil.CredentialsProducer
 	clientFactory      *clientFactory
+	configHandler      *configHandler
 }
 
 func New() (interface{}, error) {
@@ -34,6 +35,7 @@ func New() (interface{}, error) {
 		clientFactory: &clientFactory{
 			clientConfig: &ClientConfig{},
 		},
+		configHandler: &configHandler{},
 	}, nil
 }
 
@@ -51,6 +53,7 @@ func (es *Elasticsearch) Type() (string, error) {
 }
 
 // Init is called on `$ vault write database/config/:db-name`.
+// or when you do a creds call after Vault's been restarted.
 func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
 	inboundConfig := &ClientConfig{}
 
@@ -149,13 +152,16 @@ func (es *Elasticsearch) Init(ctx context.Context, rootConfig map[string]interfa
 		}
 	}
 	es.clientFactory.UpdateConfig(inboundConfig)
-	return nil, nil
+
+	// Returning the root config here persists it to storage across shutdowns.
+	// We also need to retain it for root credential rotation.
+	es.configHandler.SetConfig(rootConfig)
+	return es.configHandler.GetConfig(), nil
 }
 
 // CreateUser is called on `$ vault read database/creds/:role-name`
 // and it's the first time anything is touched from `$ vault write database/roles/:role-name`.
 func (es *Elasticsearch) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, _ time.Time) (string, string, error) {
-	return "foo", "foo", nil
 	username, err := es.credentialProducer.GenerateUsername(usernameConfig)
 	if err != nil {
 		return "", "", errwrap.Wrapf(fmt.Sprintf("unable to generate username for %q: {{err}}", usernameConfig), err)
@@ -238,7 +244,11 @@ func (es *Elasticsearch) RotateRootCredentials(ctx context.Context, statements [
 	if err := es.clientFactory.UpdatePassword(ctx.Done(), newPassword); err != nil {
 		return nil, errwrap.Wrapf("unable to update root password: {{err}}", err)
 	}
-	return nil, nil
+	rootConfig := es.configHandler.GetConfig()
+	rootConfig["password"] = newPassword
+	es.configHandler.SetConfig(rootConfig)
+	// We need to return the updated config to persist it to storage.
+	return es.configHandler.GetConfig(), nil
 }
 
 func (es *Elasticsearch) Close() error {
@@ -269,6 +279,23 @@ func newCreationStatement(statements dbplugin.Statements) (*creationStatement, e
 type creationStatement struct {
 	PreexistingRoles []string               `json:"elasticsearch_roles"`
 	RoleToCreate     map[string]interface{} `json:"elasticsearch_role_definition"`
+}
+
+type configHandler struct {
+	config map[string]interface{}
+	mux    sync.Mutex
+}
+
+func (h *configHandler) SetConfig(config map[string]interface{}) {
+	h.mux.Lock()
+	defer h.mux.Unlock()
+	h.config = config
+}
+
+func (h *configHandler) GetConfig() map[string]interface{} {
+	h.mux.Lock()
+	defer h.mux.Unlock()
+	return h.config
 }
 
 // clientFactory prevents races because both the config endpoint and the rotate root action
