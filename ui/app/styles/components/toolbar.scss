@@ -3,13 +3,39 @@
 }
 
 .toolbar {
-  align-items: center;
   background-color: $ui-gray-010;
   border-top: $base-border;
+  box-shadow: 0 2px 0 -1px $ui-gray-300;
+  position: relative;
+
+  &::after {
+    background: linear-gradient(to right, rgba($ui-gray-010, 0), $ui-gray-010);
+    bottom: 0;
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: $spacing-s;
+    z-index: 2;
+  }
+
+  .input,
+  .select {
+    min-width: 160px;
+  }
+}
+
+.toolbar-scroller {
+  align-items: center;
   display: flex;
   height: 44px;
   justify-content: space-between;
   overflow-x: auto;
+  width: 100%;
+
+  @include from($mobile) {
+    padding: 0 $spacing-xxs;
+  }
 
   &::-webkit-scrollbar {
     border-bottom: $base-border;
@@ -19,14 +45,6 @@
   &::-webkit-scrollbar-thumb {
     background: $ui-gray-300;
     border-radius: $spacing-xxs;
-  }
-
-  @include from($mobile) {
-    padding: 0 $spacing-xxs;
-  }
-
-  .input {
-    min-width: 160px;
   }
 }
 
@@ -60,9 +78,9 @@
   @extend .button;
   @extend .is-ghost;
   @extend .has-icon-right;
-  background-color: $ui-gray-050;
   border: 0;
   color: $black;
+  transition: background-color $speed;
 
   &:hover {
     background-color: $ui-gray-100;

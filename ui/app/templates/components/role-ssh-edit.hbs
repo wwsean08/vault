@@ -19,49 +19,46 @@
       {{/if}}
     </h1>
   </p.levelLeft>
-  <p.levelRight>
-    <div class="field is-grouped">
-      {{#if (eq mode "show") }}
-        {{#if (or model.canUpdate model.canDelete)}}
-          <div class="control">
-            {{#secret-link
-              secret=model.id
-              mode="edit"
-              replace=true
-              class="button has-icon-right is-ghost is-compact"
-              }}
-              Edit role
-              {{i-con glyph="chevron-right" size=11}}
-            {{/secret-link}}
-          </div>
-        {{/if}}
-        <div class="control">
-          {{#if (eq model.keyType "otp")}}
-            {{#secret-link
-              mode="credentials"
-              secret=model.id
-              class="button has-icon-right is-ghost is-compact"
-              data-test-backend-credentials=true
-            }}
-             Generate Credentials
-             {{i-con glyph="chevron-right" size=11}}
-            {{/secret-link}}
-          {{else}}
-            {{#secret-link
-              mode="sign"
-              secret=model.id
-              class="button has-icon-right is-ghost is-compact"
-              data-test-backend-credentials=true
-            }}
-              Sign Keys
-              {{i-con glyph="chevron-right" size=11}}
-            {{/secret-link}}
-          {{/if}}
-        </div>
-      {{/if}}
-    </div>
-  </p.levelRight>
 </PageHeader>
+
+<Toolbar>
+  <ToolbarActions>
+    {{#if (eq mode "show") }}
+      {{#if (or model.canUpdate model.canDelete)}}
+        {{#secret-link
+          secret=model.id
+          mode="edit"
+          replace=true
+          class="toolbar-button"
+          }}
+          Edit role
+          {{i-con glyph="chevron-right" size=12}}
+        {{/secret-link}}
+      {{/if}}
+      {{#if (eq model.keyType "otp")}}
+        {{#secret-link
+          mode="credentials"
+          secret=model.id
+          class="toolbar-button"
+          data-test-backend-credentials=true
+        }}
+         Generate Credentials
+         {{i-con glyph="chevron-right" size=12}}
+        {{/secret-link}}
+      {{else}}
+        {{#secret-link
+          mode="sign"
+          secret=model.id
+          class="toolbar-button"
+          data-test-backend-credentials=true
+        }}
+          Sign Keys
+          {{i-con glyph="chevron-right" size=12}}
+        {{/secret-link}}
+      {{/if}}
+    {{/if}}
+  </ToolbarActions>
+</Toolbar>
 
 {{#if (or (eq mode 'edit') (eq mode 'create'))}}
   {{partial 'partials/role-ssh/form'}}

@@ -30,7 +30,7 @@
       @data=model.policy
     />
     {{#if (and (not-eq model.id "root") (or capabilities.canUpdate capabilities.canDelete))}}
-      <ToolbarButton @params={{array 'vault.cluster.policy.edit' model.id}} @data-test-policy-edit-toggle=true>
+      <ToolbarButton @params={{array 'vault.cluster.policy.edit' model.id}} data-test-policy-edit-toggle=true>
         Edit policy
       </ToolbarButton>
     {{/if}}

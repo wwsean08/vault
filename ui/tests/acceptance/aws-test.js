@@ -34,6 +34,7 @@ module('Acceptance | aws secret backend', function(hooks) {
 
     await enablePage.enable('aws', path);
 
+    await click('[data-test-configuration-tab]');
     await click('[data-test-secret-backend-configure]');
     assert.equal(currentURL(), `/vault/settings/secrets/configure/${path}`);
     assert.ok(findAll('[data-test-aws-root-creds-form]').length, 'renders the empty root creds form');
