@@ -11,7 +11,6 @@ const config = {
         process.env.CI ? '--no-sandbox' : null,
         '--headless',
         '--disable-gpu',
-        '--disable-dev-shm-usage',
         '--disable-software-rasterizer',
         '--mute-audio',
         '--remote-debugging-port=0',
@@ -28,3 +27,11 @@ const config = {
     },
   },
 };
+
+if (process.env.CI) {
+  config.reporter = 'xunit';
+  config.report_file = 'test-reports/ember.xml';
+  config.xunit_intermediate_output = true;
+}
+
+module.exports = config;
