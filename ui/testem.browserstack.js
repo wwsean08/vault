@@ -1,7 +1,7 @@
 /* eslint-env node */
 module.exports = {
   framework: 'qunit',
-  test_page: 'tests/index.html?hidepassed',
+  test_page: 'tests/index.html?hidepassed&nolint',
   tap_quiet_logs: true,
   disable_watching: true,
   timeout: 1200,
@@ -74,7 +74,7 @@ module.exports = {
         '--bv',
         '11.0',
         '-t',
-        '1500',
+        '600',
         '--u',
         '<url>&legacy=true',
       ],
@@ -82,7 +82,7 @@ module.exports = {
     },
   },
   launch_in_dev: [],
-  launch_in_ci: ['BS_Chrome_Current', 'BS_Firefox_Current', 'BS_Safari_Current'],
+  launch_in_ci: ['BS_IE_11'],
   on_exit:
     '[ -e ../../vault-ui-integration-server.pid ] && node ../../scripts/start-vault.js `cat ../../vault-ui-integration-server.pid`; [ -e ../../vault-ui-integration-server.pid ] && rm ../../vault-ui-integration-server.pid',
   proxies: {

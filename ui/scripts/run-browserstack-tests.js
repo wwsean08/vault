@@ -18,7 +18,13 @@ function run(command, args = []) {
 
   try {
     try {
-      await run('ember', ['test', '-f=permissions', '--c', 'testem.browserstack.js']);
+      await run('ember', [
+        'test',
+        '-f=!enterprise',
+        '-m="Acceptance | console"',
+        '--c',
+        'testem.browserstack.js',
+      ]);
 
       console.log('success');
       process.exit(0);
