@@ -20,9 +20,10 @@ function run(command, args = []) {
     try {
       await run('ember', [
         'test',
-        '-f=!enterprise',
+        '-f',
+        '!enterprise',
         '-m="Acceptance | console"',
-        '--c',
+        '-c',
         'testem.browserstack.js',
       ]);
 
