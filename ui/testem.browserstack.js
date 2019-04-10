@@ -12,9 +12,9 @@ module.exports = {
       exe: 'node_modules/.bin/browserstack-launch',
       args: [
         '--os',
-        'Windows',
+        'OS X',
         '--osv',
-        '10',
+        'Mojave',
         '--b',
         'chrome',
         '--bv',
@@ -30,9 +30,9 @@ module.exports = {
       exe: 'node_modules/.bin/browserstack-launch',
       args: [
         '--os',
-        'Windows',
+        'OS X',
         '--osv',
-        '10',
+        'Mojave',
         '--b',
         'firefox',
         '--bv',
