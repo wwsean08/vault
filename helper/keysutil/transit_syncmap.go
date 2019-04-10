@@ -12,6 +12,14 @@ func NewTransitSyncMap() *TransitSyncMap {
 	return &TransitSyncMap{syncmap: sync.Map{}}
 }
 
+func (c *TransitSyncMap) CacheActive() bool {
+	return true
+}
+
+func (c *TransitSyncMap) Type() CacheType {
+	return SyncMap
+}
+
 func (c *TransitSyncMap) Delete(key interface{}) {
 	c.syncmap.Delete(key)
 }

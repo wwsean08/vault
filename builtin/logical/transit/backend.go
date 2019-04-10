@@ -14,8 +14,11 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	if err := b.Setup(ctx, conf); err != nil {
 		return nil, err
 	}
-	if err := b.initializeCache(ctx, conf.StorageView); err != nil {
-		return b, err
+
+	if !conf.System.CachingDisabled() {
+		if err := b.initializeCache(ctx, conf.StorageView); err != nil {
+			return b, err
+		}
 	}
 	return b, nil
 }
