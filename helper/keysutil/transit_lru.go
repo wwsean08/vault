@@ -12,6 +12,14 @@ func NewTransitLRU(size int) (*TransitLRU, error) {
 	return &TransitLRU{lru: lru, size: size}, err
 }
 
+func (c *TransitLRU) CacheActive() bool {
+	return true
+}
+
+func (c *TransitLRU) Type() CacheType {
+	return LRU
+}
+
 func (c *TransitLRU) Delete(key interface{}) {
 	c.lru.Remove(key)
 }
