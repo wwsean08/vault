@@ -23,7 +23,6 @@ function run(command, args = []) {
       console.log('success');
       process.exit(0);
     } finally {
-      // this needs to be updated to show results in our CI system
       if (process.env.TRAVIS_JOB_NUMBER) {
         await run('ember', ['browserstack:results']);
       }
