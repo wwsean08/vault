@@ -82,7 +82,7 @@ module.exports = {
     },
   },
   launch_in_dev: [],
-  launch_in_ci: ['BS_Safari_Current'],
+  launch_in_ci: ['BS_Safari_Current', 'BS_IE_11'],
   on_exit:
     '[ -e ../../vault-ui-integration-server.pid ] && node ../../scripts/start-vault.js `cat ../../vault-ui-integration-server.pid`; [ -e ../../vault-ui-integration-server.pid ] && rm ../../vault-ui-integration-server.pid',
   proxies: {
