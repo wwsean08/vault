@@ -15,7 +15,7 @@ func TestTransit_Random(t *testing.T) {
 	sysView := logical.TestSystemView()
 	storage := &logical.InmemStorage{}
 
-	b = Backend(&logical.BackendConfig{
+	b, _ = Backend(&logical.BackendConfig{
 		StorageView: storage,
 		System:      sysView,
 	})
