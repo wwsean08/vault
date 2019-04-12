@@ -2,8 +2,8 @@ package transit
 
 import (
 	"context"
+	"errors"
 
-	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/logical"
 	"github.com/hashicorp/vault/logical/framework"
 )
@@ -45,9 +45,8 @@ func (b *backend) pathCacheConfig() *framework.Path {
 func (b *backend) pathCacheConfigWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	// get target size
 	cacheSize := d.Get("size").(int)
-	err := b.lm.SetCacheSize(cacheSize)
-	if err != nil {
-		return nil, errwrap.Wrapf("failed to set cache size: {{err}}", err)
+	if cacheSize < 0 {
+		return nil, errors.New("size must be greater or equal to 0")
 	}
 
 	// store cache size
@@ -60,7 +59,12 @@ func (b *backend) pathCacheConfigWrite(ctx context.Context, req *logical.Request
 	if err := req.Storage.Put(ctx, entry); err != nil {
 		return nil, err
 	}
-	return nil, nil
+
+	resp := &logical.Response{
+		Warnings: []string{"cache configurations will be applied when this backend is restarted"},
+	}
+
+	return resp, nil
 }
 
 type configCacheSize struct {

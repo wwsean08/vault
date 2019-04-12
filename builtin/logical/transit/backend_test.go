@@ -30,7 +30,7 @@ func createBackendWithStorage(t *testing.T) (*backend, logical.Storage) {
 	config := logical.TestBackendConfig()
 	config.StorageView = &logical.InmemStorage{}
 
-	b := Backend(config)
+	b, _ := Backend(config)
 	if b == nil {
 		t.Fatalf("failed to create backend")
 	}
@@ -50,7 +50,7 @@ func createBackendWithSysView(t *testing.T) (*backend, logical.Storage) {
 		System:      sysView,
 	}
 
-	b := Backend(conf)
+	b, _ := Backend(conf)
 	if b == nil {
 		t.Fatal("failed to create backend")
 	}
@@ -1298,12 +1298,12 @@ func TestPolicyFuzzing(t *testing.T) {
 		System: sysView,
 	}
 
-	be = Backend(conf)
+	be, _ = Backend(conf)
 	be.Setup(context.Background(), conf)
 	testPolicyFuzzingCommon(t, be)
 
 	sysView.CachingDisabledVal = true
-	be = Backend(conf)
+	be, _ = Backend(conf)
 	be.Setup(context.Background(), conf)
 	testPolicyFuzzingCommon(t, be)
 }
