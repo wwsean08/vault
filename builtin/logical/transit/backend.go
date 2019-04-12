@@ -5,16 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-<<<<<<< HEAD
+	"github.com/hashicorp/errwrap"
+	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/keysutil"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/hashicorp/vault/sdk/framework"
-=======
-	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/vault/helper/keysutil"
-	"github.com/hashicorp/vault/logical"
-	"github.com/hashicorp/vault/logical/framework"
->>>>>>> applies changes to cache-config when the backend is restarted and removes a bunch of unneeded code
 )
 
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
