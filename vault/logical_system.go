@@ -2209,6 +2209,42 @@ func (b *SystemBackend) handleConfigUIHeadersDelete(ctx context.Context, req *lo
 	return nil, nil
 }
 
+func (b *SystemBackend) handleConfigUIBannerRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	value, err := b.Core.uiConfig.GetBanner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, nil
+	}
+
+	return &logical.Response{
+		Data: map[string]interface{}{
+			"text": value,
+		},
+	}, nil
+}
+
+func (b *SystemBackend) handleConfigUIBannerUpdate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	value := data.Get("text").(string)
+
+	err := b.Core.uiConfig.SetBanner(ctx, value)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &logical.Response{}
+	return resp, nil
+}
+
+func (b *SystemBackend) handleConfigUIBannerDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	err := b.Core.uiConfig.DeleteBanner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 // handleRawRead is used to read directly from the barrier
 func (b *SystemBackend) handleRawRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	path := data.Get("path").(string)
@@ -3384,6 +3420,10 @@ This path responds to the following HTTP methods.
     LIST /
         List the headers configured for the UI.
         `,
+	},
+	"config/ui/banner": {
+		"",
+		"",
 	},
 	"init": {
 		"Initializes or returns the initialization status of the Vault.",

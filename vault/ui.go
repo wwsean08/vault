@@ -120,6 +120,7 @@ func (c *UIConfig) SetHeader(ctx context.Context, header, value string) error {
 	if config == nil {
 		config = &uiConfigEntry{
 			Headers: http.Header{},
+			Banner:  "",
 		}
 	}
 	config.Headers.Set(header, value)
@@ -140,6 +141,56 @@ func (c *UIConfig) DeleteHeader(ctx context.Context, header string) error {
 	}
 
 	config.Headers.Del(header)
+	return c.save(ctx, config)
+}
+
+func (c *UIConfig) GetBanner(ctx context.Context) (string, error) {
+	c.l.Lock()
+	defer c.l.Unlock()
+
+	config, err := c.get(ctx)
+	if err != nil {
+		return "", err
+	}
+	if config == nil {
+		return "", nil
+	}
+
+	value := config.Banner
+	return value, nil
+}
+
+func (c *UIConfig) SetBanner(ctx context.Context, value string) error {
+	c.l.Lock()
+	defer c.l.Unlock()
+
+	config, err := c.get(ctx)
+	if err != nil {
+		return err
+	}
+	if config == nil {
+		config = &uiConfigEntry{
+			Headers: http.Header{},
+			Banner:  value,
+		}
+	}
+
+	return c.save(ctx, config)
+}
+
+func (c *UIConfig) DeleteBanner(ctx context.Context) error {
+	c.l.Lock()
+	defer c.l.Unlock()
+
+	config, err := c.get(ctx)
+	if err != nil {
+		return err
+	}
+	if config == nil {
+		return nil
+	}
+
+	config.Banner = ""
 	return c.save(ctx, config)
 }
 
@@ -185,7 +236,7 @@ func (c *UIConfig) get(ctx context.Context) (*uiConfigEntry, error) {
 }
 
 func (c *UIConfig) save(ctx context.Context, config *uiConfigEntry) error {
-	if len(config.Headers) == 0 {
+	if len(config.Headers) == 0 && config.Banner == "" {
 		if err := c.physicalStorage.Delete(ctx, uiConfigPlaintextKey); err != nil {
 			return err
 		}
@@ -196,7 +247,6 @@ func (c *UIConfig) save(ctx context.Context, config *uiConfigEntry) error {
 	if err != nil {
 		return err
 	}
-
 	entry := &physical.Entry{
 		Key:   uiConfigPlaintextKey,
 		Value: configRaw,
@@ -214,4 +264,5 @@ func (c *UIConfig) save(ctx context.Context, config *uiConfigEntry) error {
 
 type uiConfigEntry struct {
 	Headers http.Header `json:"headers"`
+	Banner  string      `json:"banner"`
 }

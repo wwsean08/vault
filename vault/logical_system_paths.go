@@ -94,6 +94,34 @@ func (b *SystemBackend) configPaths() []*framework.Path {
 			HelpDescription: strings.TrimSpace(sysHelp["config/ui/headers"][0]),
 			HelpSynopsis:    strings.TrimSpace(sysHelp["config/ui/headers"][1]),
 		},
+		{
+			Pattern: "config/ui/banner",
+
+			Fields: map[string]*framework.FieldSchema{
+				"text": &framework.FieldSchema{
+					Type:        framework.TypeString,
+					Description: "The value to set the banner.",
+				},
+			},
+
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ReadOperation: &framework.PathOperation{
+					Callback: b.handleConfigUIBannerRead,
+					Summary:  "Return the given UI banner's configuration",
+				},
+				logical.UpdateOperation: &framework.PathOperation{
+					Callback: b.handleConfigUIBannerUpdate,
+					Summary:  "Configure the value to be returned for the UI banner.",
+				},
+				logical.DeleteOperation: &framework.PathOperation{
+					Callback: b.handleConfigUIBannerDelete,
+					Summary:  "Remove a UI banner.",
+				},
+			},
+
+			HelpDescription: strings.TrimSpace(sysHelp["config/ui/banner"][0]),
+			HelpSynopsis:    strings.TrimSpace(sysHelp["config/ui/banner"][1]),
+		},
 
 		{
 			Pattern: "generate-root(/attempt)?$",

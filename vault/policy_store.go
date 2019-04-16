@@ -157,6 +157,11 @@ path "sys/tools/random/*" {
 path "sys/control-group/request" {
     capabilities = ["update"]
 }
+
+## Allow access to the banner via the ui
+path "sys/config/ui/banner" {
+	capabilities = ["read"]
+}
 `
 )
 
